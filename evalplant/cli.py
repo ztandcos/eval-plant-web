@@ -11,7 +11,12 @@ from rich.table import Table
 from rich.text import Text
 
 from . import __version__
-from .bugsinpy import prepare_task, run_agent, run_agent_in_docker
+from .bugsinpy import (
+    prepare_task,
+    prepare_task_in_docker,
+    run_agent,
+    run_agent_in_docker,
+)
 from .core import MECHANISMS, STAGES, validate_stage_mechanism
 from .db import (
     connect,
@@ -199,6 +204,22 @@ def command_prepare(args: argparse.Namespace, connection: sqlite3.Connection) ->
     console.print_json(data=metadata)
 
 
+def command_docker_prepare(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    metadata = prepare_task_in_docker(
+        _path(args.bugsinpy_root),
+        args.project,
+        args.bug,
+        _path(args.workspace),
+        _path(args.oracle_dir),
+        args.image,
+        args.timeout,
+        args.platform,
+    )
+    console.print_json(data=metadata)
+
+
 def command_run(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
     task_dir = run_agent(
         _path(args.workspace),
@@ -289,6 +310,19 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--oracle-dir", default="data/oracle")
     sub.add_argument("--timeout", type=int, default=1800)
     sub.set_defaults(handler=command_prepare)
+
+    sub = commands.add_parser(
+        "docker-prepare", help="Prepare one task at the fixed container path /task"
+    )
+    sub.add_argument("--bugsinpy-root", required=True)
+    sub.add_argument("--project", required=True)
+    sub.add_argument("--bug", required=True, type=int)
+    sub.add_argument("--workspace", required=True)
+    sub.add_argument("--oracle-dir", default="data/oracle")
+    sub.add_argument("--image", default="evalplant-agent:0.2")
+    sub.add_argument("--platform", default="linux/amd64")
+    sub.add_argument("--timeout", type=int, default=1800)
+    sub.set_defaults(handler=command_docker_prepare)
 
     sub = commands.add_parser("run", help="Run mini-SWE-agent in a prepared workspace")
     sub.add_argument("workspace")

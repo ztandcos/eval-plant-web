@@ -27,33 +27,23 @@ mini-SWE-agent, but no benchmark repository, task, database, oracle, or unrelate
 docker build --platform linux/amd64 -t evalplant-agent:0.2 .
 ```
 
-For old benchmark dependencies, preparation can still run in Linux x86. Mount
-only the benchmark, workspace parent, and oracle directory; do not mount the
-project root:
+Prepare exactly one task through the host orchestrator:
 
 ```bash
-docker run --rm --platform linux/amd64 \
-  --entrypoint evalplant \
-  -v "$PWD/.benchmarks/BugsInPy:$PWD/.benchmarks/BugsInPy:ro" \
-  -v "$PWD/.workspaces:$PWD/.workspaces" \
-  -v "$PWD/data/oracle:$PWD/data/oracle" \
-  -w "$PWD" evalplant-agent:0.2 \
-  --db /tmp/evalplant.db prepare \
-  --bugsinpy-root "$PWD/.benchmarks/BugsInPy" \
+uv run evalplant docker-prepare \
+  --bugsinpy-root .benchmarks/BugsInPy \
   --project fastapi --bug 11 \
-  --workspace "$PWD/.workspaces/fastapi-11" \
-  --oracle-dir "$PWD/data/oracle"
+  --workspace .workspaces/fastapi-11 \
+  --oracle-dir data/oracle
 ```
 
-Prepare one BugsInPy task. This checks that the buggy revision fails, the fixed revision passes, removes Git history and fixed-commit metadata, then creates a clean baseline repository.
-
-```bash
-uv run evalplant prepare \
-  --bugsinpy-root /path/to/BugsInPy \
-  --project youtube-dl \
-  --bug 2 \
-  --workspace /tmp/evalplant-youtube-dl-2
-```
+The trusted preparation container sees the benchmark as `/bench`, the single
+empty host workspace as `/task`, and oracle output as `/oracle`. BugsInPy's own
+checkout script needs temporary write access to `/bench`; the later Agent
+container never mounts it. Preparation checks that the buggy revision fails and
+the fixed revision passes, then sanitizes the buggy task. Building its Python
+environment at `/task` makes it reusable by later Agent containers without
+host-path-dependent virtual environments.
 
 Run the prepared task through the host orchestrator:
 
@@ -63,8 +53,8 @@ uv run evalplant docker-run .workspaces/fastapi-11 \
   --step-limit 20
 ```
 
-`docker-run` bind-mounts only that task read-write and the selected local output
-directory as `/output`. The container cannot see sibling workspaces, the
+`docker-run` bind-mounts only that task at `/task` and the selected local output
+directory at `/output`. The container cannot see sibling workspaces, the
 EvalPlant database, oracle data, or host source. After it exits, the host imports
 the artifacts into SQLite. The API key is inherited by name and is not stored in
 the image or repository.

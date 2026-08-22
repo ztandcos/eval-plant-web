@@ -3,7 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from evalplant.bugsinpy import _docker_agent_command, _is_test_path, _validate
+from evalplant.bugsinpy import (
+    _docker_agent_command,
+    _docker_prepare_command,
+    _is_test_path,
+    _validate,
+)
 from evalplant.core import normalize_trajectory, signal_bundle
 from evalplant.db import connect, import_run, save_annotation, save_attribution
 from evalplant.metrics import report
@@ -112,12 +117,41 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(
             mounts,
             [
-                "type=bind,src=%s,dst=%s" % (workspace, workspace),
+                "type=bind,src=%s,dst=/task" % workspace,
                 "type=bind,src=%s,dst=/output" % run_dir,
             ],
         )
         self.assertIn("execute", command)
+        self.assertIn("/task", command)
         self.assertNotIn("type=bind,src=/host/evalplant,dst=/host/evalplant", mounts)
+
+    def test_docker_prepare_mounts_one_task_at_fixed_path(self):
+        command = _docker_prepare_command(
+            Path("/host/evalplant/.benchmarks/BugsInPy"),
+            Path("/host/evalplant/.workspaces/fastapi-1"),
+            Path("/host/evalplant/data/oracle"),
+            "evalplant-agent:0.2",
+            "fastapi",
+            1,
+            1800,
+            "linux/amd64",
+        )
+        mounts = [
+            command[index + 1]
+            for index, item in enumerate(command)
+            if item == "--mount"
+        ]
+        self.assertEqual(
+            mounts,
+            [
+                "type=bind,src=/host/evalplant/.benchmarks/BugsInPy,dst=/bench",
+                "type=bind,src=/host/evalplant/.workspaces/fastapi-1,dst=/task",
+                "type=bind,src=/host/evalplant/data/oracle,dst=/oracle",
+            ],
+        )
+        self.assertNotIn(
+            "type=bind,src=/host/evalplant/.workspaces,dst=/task", mounts
+        )
 
 
 if __name__ == "__main__":

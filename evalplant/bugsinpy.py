@@ -142,9 +142,7 @@ def _compile(workspace: Path) -> None:
 def _checkout(
     root: Path, project: str, bug: int, version: int, workspace: Path
 ) -> None:
-    with tempfile.TemporaryDirectory(
-        prefix="evalplant-checkout-", dir=str(workspace.parent)
-    ) as checkout_dir:
+    with tempfile.TemporaryDirectory(prefix="evalplant-checkout-") as checkout_dir:
         result = _run(
             [
                 _tool(root, "bugsinpy-checkout"),
@@ -161,9 +159,10 @@ def _checkout(
         source = Path(checkout_dir) / project
         if result.returncode or not source.exists():
             raise RuntimeError("BugsInPy checkout failed:\n%s" % result.stdout)
-        if workspace.exists():
-            workspace.rmdir()
-        shutil.move(str(source), str(workspace))
+        workspace.mkdir(parents=True, exist_ok=True)
+        if any(workspace.iterdir()):
+            raise ValueError("Workspace must be empty: %s" % workspace)
+        shutil.copytree(str(source), str(workspace), dirs_exist_ok=True)
     _compile(workspace)
 
 
@@ -434,11 +433,11 @@ def _docker_agent_command(
         "-e",
         "HOME=/tmp/evalplant-home",
         "--mount",
-        "type=bind,src=%s,dst=%s" % (workspace, workspace),
+        "type=bind,src=%s,dst=/task" % workspace,
         "--mount",
         "type=bind,src=%s,dst=/output" % run_dir,
         "-w",
-        str(workspace),
+        "/task",
     ]
     if hasattr(os, "getuid"):
         command += ["--user", "%s:%s" % (os.getuid(), os.getgid())]
@@ -447,7 +446,7 @@ def _docker_agent_command(
         "--db",
         "/tmp/evalplant.db",
         "execute",
-        str(workspace),
+        "/task",
         "--run-dir",
         "/output",
         "--model",
@@ -458,6 +457,106 @@ def _docker_agent_command(
     if step_limit:
         command += ["--step-limit", str(step_limit)]
     return command
+
+
+def _docker_prepare_command(
+    bugsinpy_root: Path,
+    workspace: Path,
+    oracle_dir: Path,
+    image: str,
+    project: str,
+    bug: int,
+    timeout: int,
+    platform: str,
+) -> List[str]:
+    for path in (bugsinpy_root, workspace, oracle_dir):
+        if "," in str(path):
+            raise ValueError("Docker bind paths cannot contain commas: %s" % path)
+    command = [
+        shutil.which("docker") or "docker",
+        "run",
+        "--rm",
+        "--platform",
+        platform,
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "-e",
+        "HOME=/tmp/evalplant-home",
+        "-e",
+        "UV_CACHE_DIR=/tmp/uv-cache",
+        "--mount",
+        "type=bind,src=%s,dst=/bench" % bugsinpy_root,
+        "--mount",
+        "type=bind,src=%s,dst=/task" % workspace,
+        "--mount",
+        "type=bind,src=%s,dst=/oracle" % oracle_dir,
+        "-w",
+        "/task",
+    ]
+    if hasattr(os, "getuid"):
+        command += ["--user", "%s:%s" % (os.getuid(), os.getgid())]
+    command += [
+        image,
+        "--db",
+        "/tmp/evalplant.db",
+        "prepare",
+        "--bugsinpy-root",
+        "/bench",
+        "--project",
+        project,
+        "--bug",
+        str(bug),
+        "--workspace",
+        "/task",
+        "--oracle-dir",
+        "/oracle",
+        "--timeout",
+        str(timeout),
+    ]
+    return command
+
+
+def prepare_task_in_docker(
+    bugsinpy_root: Path,
+    project: str,
+    bug: int,
+    workspace: Path,
+    oracle_dir: Path,
+    image: str,
+    timeout: int,
+    platform: str,
+) -> Dict[str, Any]:
+    if not shutil.which("docker"):
+        raise ValueError("docker is not installed or not on PATH")
+    if not bugsinpy_root.exists():
+        raise ValueError("BugsInPy root does not exist: %s" % bugsinpy_root)
+    if workspace.exists() and any(workspace.iterdir()):
+        raise ValueError("Workspace must be empty: %s" % workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    oracle_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = _run(
+            _docker_prepare_command(
+                bugsinpy_root,
+                workspace,
+                oracle_dir,
+                image,
+                project,
+                bug,
+                timeout,
+                platform,
+            ),
+            timeout=timeout * 3 + 120,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Task preparation container timed out") from error
+    if result.returncode:
+        raise RuntimeError("Task preparation container failed:\n%s" % result.stdout)
+    task_file = workspace / ".evalplant" / "task.json"
+    if not task_file.exists():
+        raise RuntimeError("Task preparation did not produce metadata")
+    return json.loads(task_file.read_text(encoding="utf-8"))
 
 
 def run_agent_in_docker(
@@ -478,7 +577,12 @@ def run_agent_in_docker(
     task_file = workspace / ".evalplant" / "task.json"
     if not task_file.exists():
         raise ValueError("Workspace is not prepared: %s" % workspace)
-    task_id = json.loads(task_file.read_text(encoding="utf-8"))["task_id"]
+    task_data = json.loads(task_file.read_text(encoding="utf-8"))
+    if task_data.get("workspace") != "/task":
+        raise ValueError(
+            "Workspace was not built for /task; prepare it again with docker-prepare"
+        )
+    task_id = task_data["task_id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     task_dir = run_dir / task_id
     if task_dir.exists() and any(task_dir.iterdir()):
