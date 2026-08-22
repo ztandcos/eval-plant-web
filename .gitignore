@@ -1,0 +1,8 @@
+.venv/
+.benchmarks/
+.workspaces/
+.ruff_cache/
+*.egg-info/
+__pycache__/
+*.py[cod]
+data/
