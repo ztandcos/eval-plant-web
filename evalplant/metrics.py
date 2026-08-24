@@ -44,7 +44,8 @@ def report(
     rows = connection.execute(
         """
         SELECT a.*, p.attributable, p.first_error_step predicted_step,
-               p.stage predicted_stage, p.mechanism predicted_mechanism
+               p.stage predicted_stage, p.mechanism predicted_mechanism,
+               p.subcategory predicted_subcategory
         FROM annotations a
         JOIN trajectories t ON t.id = a.trajectory_id
         LEFT JOIN attributions p ON p.trajectory_id = a.trajectory_id
@@ -60,6 +61,18 @@ def report(
     evidence = [
         row["evidence_pass"] for row in rows if row["evidence_pass"] is not None
     ]
+    outcome_rows = connection.execute(
+        """
+        SELECT base_task_id, verdict, reward FROM trajectories
+        WHERE experiment_id=? AND COALESCE(health_status, 'VALID')='VALID'
+          AND reward IS NOT NULL
+        """,
+        (experiment_id,),
+    ).fetchall()
+    grouped = {}
+    for row in outcome_rows:
+        grouped.setdefault(row["base_task_id"], []).append(row["reward"])
+    repeated = [rewards for rewards in grouped.values() if len(rewards) >= 3]
     return {
         "experiment": experiment_id,
         "split": split,
@@ -82,6 +95,30 @@ def report(
                 if row["predicted_mechanism"]
             ]
         ),
+        "subcategory_macro_f1": macro_f1(
+            [
+                (row["subcategory"], row["predicted_subcategory"])
+                for row in evaluated
+                if row["subcategory"] and row["predicted_subcategory"]
+            ]
+        ),
         "evidence_pass_rate": sum(evidence) / len(evidence) if evidence else None,
         "attribution_coverage": len(evaluated) / len(rows) if rows else None,
+        "average_reward": (
+            sum(row["reward"] for row in outcome_rows) / len(outcome_rows)
+            if outcome_rows
+            else None
+        ),
+        "pass_all_repeats": (
+            sum(all(value == 1 for value in rewards) for rewards in repeated)
+            / len(repeated)
+            if repeated
+            else None
+        ),
+        "pass_at_3": (
+            sum(any(value == 1 for value in rewards[:3]) for rewards in repeated)
+            / len(repeated)
+            if repeated
+            else None
+        ),
     }

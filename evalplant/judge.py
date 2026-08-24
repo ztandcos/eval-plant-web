@@ -1,19 +1,18 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from .core import (
-    MECHANISMS,
-    STAGES,
+    TAXONOMY,
     normalize_trajectory,
     read_json,
     signal_bundle,
     summarize_step,
-    validate_stage_mechanism,
+    validate_taxonomy,
 )
 
-PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "attribution_v1.txt"
 
 
 def _json_call(
@@ -38,34 +37,22 @@ def _json_call(
     return result
 
 
-def _candidate_steps(result: Dict[str, Any], valid_steps: set) -> List[int]:
-    candidates = result.get("candidates")
-    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 3:
-        raise ValueError("Judge must return one to three candidates")
-    step_ids = []
-    for candidate in candidates:
-        if not isinstance(candidate, dict) or not isinstance(
-            candidate.get("step_id"), int
-        ):
-            raise ValueError("Each candidate needs an integer step_id")
-        if candidate["step_id"] not in valid_steps:
-            raise ValueError("Candidate references an unknown step")
-        step_ids.append(candidate["step_id"])
-    return step_ids
-
-
 def _validate_attribution(result: Dict[str, Any], valid_steps: set) -> Dict[str, Any]:
     if not isinstance(result.get("attributable"), bool):
         raise ValueError("attributable must be boolean")
+    confidence = float(result.get("confidence") or 0)
+    if not 0 <= confidence <= 1:
+        raise ValueError("confidence must be between zero and one")
     if not result["attributable"]:
         return {
             "attributable": False,
             "first_error_step": None,
             "stage": None,
             "mechanism": None,
-            "summary": str(result.get("summary") or "No supported attribution"),
+            "subcategory": None,
+            "summary": str(result.get("summary") or "Insufficient evidence"),
             "evidence_step_ids": [],
-            "confidence": float(result.get("confidence") or 0),
+            "confidence": confidence,
             "uncertainty": result.get("uncertainty"),
         }
 
@@ -79,15 +66,16 @@ def _validate_attribution(result: Dict[str, Any], valid_steps: set) -> Dict[str,
         or any(item not in valid_steps for item in evidence)
     ):
         raise ValueError("evidence_step_ids must reference real steps")
-    validate_stage_mechanism(str(result.get("stage")), str(result.get("mechanism")))
-    confidence = float(result.get("confidence"))
-    if not 0 <= confidence <= 1:
-        raise ValueError("confidence must be between zero and one")
+    phase = str(result.get("stage"))
+    category = str(result.get("mechanism"))
+    subcategory = str(result.get("subcategory"))
+    validate_taxonomy(phase, category, subcategory)
     return {
         "attributable": True,
         "first_error_step": step,
-        "stage": result["stage"],
-        "mechanism": result["mechanism"],
+        "stage": phase,
+        "mechanism": category,
+        "subcategory": subcategory,
         "summary": str(result.get("summary") or ""),
         "evidence_step_ids": evidence,
         "counter_evidence": result.get("counter_evidence") or [],
@@ -111,62 +99,33 @@ def analyze_trajectory(
     valid_steps = {step["step_index"] for step in steps}
     if not valid_steps:
         raise ValueError("Cannot analyze an empty trajectory")
+    evidence = signal_bundle(steps)
+    evidence.update(
+        {
+            "final_patch_present": bool(final_patch.strip()),
+            "final_patch_chars": len(final_patch),
+            "verifier_log_tail": final_log[-12000:],
+        }
+    )
+    payload = {
+        "task": "Find the earliest evidence-supported pivotal agent error.",
+        "taxonomy": TAXONOMY,
+        "deterministic_evidence": evidence,
+        "full_timeline": [summarize_step(step) for step in steps],
+        "final_patch": final_patch[:30000],
+    }
     client = OpenAI(
         api_key=api_key,
         base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
     )
-
-    candidate_payload = {
-        "task": (
-            "Locate up to three candidate steps for the earliest pivotal error "
-            "in this failed coding-agent trajectory."
+    result = _validate_attribution(
+        _json_call(
+            client,
+            model,
+            PROMPT_PATH.read_text(encoding="utf-8"),
+            payload,
         ),
-        "signals": signal_bundle(steps),
-        "timeline": [summarize_step(step) for step in steps],
-    }
-    candidate_prompt = (PROMPT_DIR / "candidate_v1.txt").read_text(encoding="utf-8")
-    candidate_result = _json_call(client, model, candidate_prompt, candidate_payload)
-    candidate_ids = _candidate_steps(candidate_result, valid_steps)
-
-    neighborhoods = []
-    for candidate_id in candidate_ids:
-        neighborhoods.append(
-            {
-                "candidate": candidate_id,
-                "steps": [
-                    summarize_step(step, limit=5000)
-                    for step in steps
-                    if candidate_id - 2 <= step["step_index"] <= candidate_id + 2
-                ],
-            }
-        )
-    attribution_payload = {
-        "task": (
-            "Identify the earliest pivotal error that materially contributed "
-            "to the final failure."
-        ),
-        "allowed_stages": STAGES,
-        "allowed_mechanisms": MECHANISMS,
-        "candidate_neighborhoods": neighborhoods,
-        "terminal_steps": [
-            summarize_step(step, limit=2000)
-            for step in steps
-            if step.get("role") == "exit"
-        ],
-        "final_patch": final_patch[:20000],
-        "final_test_log": final_log[-20000:],
-    }
-    attribution_prompt = (PROMPT_DIR / "attribution_v1.txt").read_text(encoding="utf-8")
-    last_error = None
-    for _ in range(2):
-        try:
-            result = _validate_attribution(
-                _json_call(client, model, attribution_prompt, attribution_payload),
-                valid_steps,
-            )
-            result["candidate_analysis"] = candidate_result
-            return result
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            last_error = error
-            attribution_payload["validation_error"] = str(error)
-    raise ValueError("Judge output stayed invalid: %s" % last_error)
+        valid_steps,
+    )
+    result["deterministic_evidence"] = evidence
+    return result

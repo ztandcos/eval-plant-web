@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,10 +18,18 @@ from .bugsinpy import (
     run_agent,
     run_agent_in_docker,
 )
-from .core import MECHANISMS, STAGES, validate_stage_mechanism
+from .core import (
+    CATEGORIES,
+    PHASES,
+    SUBCATEGORIES,
+    validate_taxonomy,
+)
 from .db import (
+    claim_attribution_job,
     connect,
+    enqueue_attribution,
     failed_trajectories,
+    finish_attribution_job,
     get_steps,
     get_trajectory,
     import_run,
@@ -29,6 +38,7 @@ from .db import (
 )
 from .judge import analyze_trajectory
 from .metrics import report
+from .online import serve
 
 console = Console()
 error_console = Console(stderr=True)
@@ -56,14 +66,17 @@ def command_inspect(args: argparse.Namespace, connection: sqlite3.Connection) ->
         "SELECT * FROM attributions WHERE trajectory_id=?", (args.trajectory,)
     ).fetchone()
     lines = [
-        "Task: %s" % trajectory["task_id"],
+        "Task: %s" % trajectory["base_task_id"],
+        "Health: %s" % (trajectory["health_status"] or "VALID"),
         "Verdict: %s" % trajectory["verdict"],
+        "Reward: %s" % trajectory["reward"],
     ]
     if attribution:
         lines += [
             "First error: %s" % attribution["first_error_step"],
-            "Stage: %s" % (attribution["stage"] or "unattributable"),
-            "Mechanism: %s" % (attribution["mechanism"] or "unattributable"),
+            "Phase: %s" % (attribution["stage"] or "unattributable"),
+            "Category: %s" % (attribution["mechanism"] or "unattributable"),
+            "Subcategory: %s" % (attribution["subcategory"] or "unattributable"),
             "Confidence: %s"
             % (
                 "%.0f%%" % (attribution["confidence"] * 100)
@@ -108,9 +121,10 @@ def command_annotate(args: argparse.Namespace, connection: sqlite3.Connection) -
     first_error_step = int(_prompt(args.step, "first error step"))
     if first_error_step not in valid_steps:
         raise ValueError("Unknown step: %s" % first_error_step)
-    stage = _prompt(args.stage, "stage")
-    mechanism = _prompt(args.mechanism, "mechanism")
-    validate_stage_mechanism(stage, mechanism)
+    stage = _prompt(args.stage, "phase")
+    mechanism = _prompt(args.mechanism, "category")
+    subcategory = _prompt(args.subcategory, "subcategory")
+    validate_taxonomy(stage, mechanism, subcategory)
     evidence_text = _prompt(args.evidence, "evidence steps, comma-separated")
     evidence = [int(item.strip()) for item in evidence_text.split(",") if item.strip()]
     if any(item not in valid_steps for item in evidence):
@@ -129,6 +143,7 @@ def command_annotate(args: argparse.Namespace, connection: sqlite3.Connection) -
         evidence_pass,
         args.notes or "",
         args.oracle_used,
+        subcategory,
     )
     console.print("Saved annotation for [bold green]%s[/bold green]" % args.trajectory)
 
@@ -149,23 +164,68 @@ def command_analyze(args: argparse.Namespace, connection: sqlite3.Connection) ->
             "SELECT 1 FROM attributions WHERE trajectory_id=?", (trajectory["id"],)
         ).fetchone()
         if cached and not args.force:
-            console.print("[dim]%s already analyzed[/dim]" % trajectory["task_id"])
+            console.print("[dim]%s already analyzed[/dim]" % trajectory["base_task_id"])
             continue
-        final_patch = _read_optional(trajectory["final_patch_path"])
-        final_log = _read_optional(trajectory["final_log_path"])
         result = analyze_trajectory(
-            Path(trajectory["raw_path"]), final_patch, final_log, args.model
+            Path(trajectory["raw_path"]),
+            _read_optional(trajectory["final_patch_path"]),
+            _read_optional(trajectory["final_log_path"]),
+            args.model,
         )
         save_attribution(connection, trajectory["id"], result)
         console.print(
-            "[green]%s[/green] step=%s stage=%s mechanism=%s"
+            "[green]%s[/green] step=%s phase=%s category=%s subcategory=%s"
             % (
-                trajectory["task_id"],
+                trajectory["base_task_id"],
                 result.get("first_error_step"),
                 result.get("stage"),
                 result.get("mechanism"),
+                result.get("subcategory"),
             )
         )
+
+
+def command_enqueue(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    count = sum(
+        enqueue_attribution(connection, row["id"])
+        for row in failed_trajectories(connection, args.experiment)
+    )
+    console.print("Queued [bold green]%s[/bold green] failed trajectories" % count)
+
+
+def command_worker(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    while True:
+        trajectory = claim_attribution_job(connection)
+        if trajectory is None:
+            if args.once:
+                console.print("No pending attribution jobs")
+                return
+            time.sleep(args.poll_seconds)
+            continue
+        try:
+            result = analyze_trajectory(
+                Path(trajectory["raw_path"]),
+                _read_optional(trajectory["final_patch_path"]),
+                _read_optional(trajectory["final_log_path"]),
+                args.model,
+            )
+            save_attribution(connection, trajectory["id"], result)
+            finish_attribution_job(connection, trajectory["id"])
+            console.print("[green]Attributed %s[/green]" % trajectory["base_task_id"])
+        except Exception as error:
+            finish_attribution_job(connection, trajectory["id"], str(error))
+            error_console.print("[red]Attribution failed:[/red] %s" % error)
+        if args.once:
+            return
+
+
+def command_serve(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    connection.close()
+    console.print("Listening on http://%s:%s/ingest" % (args.host, args.port))
+    try:
+        serve(_path(args.db), _path(args.store), args.host, args.port)
+    except KeyboardInterrupt:
+        console.print("Stopped")
 
 
 def _percent(value: Optional[float]) -> str:
@@ -176,6 +236,9 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
     result = report(connection, args.experiment, args.split)
     table = Table("Metric", "Value")
     table.add_row("Verdicts", json.dumps(result["verdicts"], sort_keys=True))
+    table.add_row("Average reward", _percent(result["average_reward"]))
+    table.add_row("Pass all repeats", _percent(result["pass_all_repeats"]))
+    table.add_row("Pass@3", _percent(result["pass_at_3"]))
     table.add_row(
         "Annotations / evaluated",
         "%s / %s" % (result["annotations"], result["evaluated"]),
@@ -185,6 +248,7 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
         "near_step_accuracy",
         "stage_macro_f1",
         "mechanism_macro_f1",
+        "subcategory_macro_f1",
         "evidence_pass_rate",
         "attribution_coverage",
     ):
@@ -245,7 +309,9 @@ def command_execute(args: argparse.Namespace, connection: sqlite3.Connection) ->
     console.print(str(task_dir))
 
 
-def command_docker_run(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+def command_docker_run(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
     task_dir = run_agent_in_docker(
         _path(args.workspace),
         _path(args.run_dir),
@@ -256,18 +322,22 @@ def command_docker_run(args: argparse.Namespace, connection: sqlite3.Connection)
         args.platform,
     )
     ids = import_run(connection, task_dir, args.experiment, args.model)
-    console.print("Container run saved and imported: [bold green]%s[/bold green]" % ids[0])
+    console.print(
+        "Container run saved and imported: [bold green]%s[/bold green]" % ids[0]
+    )
 
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        prog="evalplant", description="Offline coding-agent failure attribution"
+        prog="evalplant", description="Harbor coding-agent evaluation and attribution"
     )
     root.add_argument("--version", action="version", version=__version__)
     root.add_argument("--db", default=os.getenv("EVALPLANT_DB", "data/evalplant.db"))
     commands = root.add_subparsers(dest="command", required=True)
 
-    sub = commands.add_parser("import", help="Import mini-SWE-agent trajectories")
+    sub = commands.add_parser(
+        "import", help="Import Harbor ATIF or legacy trajectories"
+    )
     sub.add_argument("path")
     sub.add_argument("--experiment", required=True)
     sub.add_argument("--agent-model")
@@ -281,21 +351,42 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("trajectory")
     sub.add_argument("--split", choices=("dev", "test"))
     sub.add_argument("--step")
-    sub.add_argument("--stage", choices=STAGES)
-    sub.add_argument("--mechanism", choices=MECHANISMS)
+    sub.add_argument("--phase", "--stage", dest="stage", choices=PHASES)
+    sub.add_argument("--category", "--mechanism", dest="mechanism", choices=CATEGORIES)
+    sub.add_argument("--subcategory", choices=SUBCATEGORIES)
     sub.add_argument("--evidence")
     sub.add_argument("--evidence-pass", choices=("yes", "no"))
     sub.add_argument("--notes")
     sub.add_argument("--oracle-used", action="store_true")
     sub.set_defaults(handler=command_annotate)
 
-    sub = commands.add_parser("analyze", help="Run two-stage DeepSeek attribution")
+    sub = commands.add_parser(
+        "analyze", help="Run one evidence-grounded DeepSeek Judge"
+    )
     sub.add_argument("--experiment", required=True)
     sub.add_argument(
         "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
     )
     sub.add_argument("--force", action="store_true")
     sub.set_defaults(handler=command_analyze)
+
+    sub = commands.add_parser("enqueue", help="Queue valid failed trajectories")
+    sub.add_argument("--experiment", required=True)
+    sub.set_defaults(handler=command_enqueue)
+
+    sub = commands.add_parser("worker", help="Process the SQLite attribution queue")
+    sub.add_argument(
+        "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
+    )
+    sub.add_argument("--once", action="store_true")
+    sub.add_argument("--poll-seconds", type=float, default=2.0)
+    sub.set_defaults(handler=command_worker)
+
+    sub = commands.add_parser("serve", help="Receive completed online ATIF traces")
+    sub.add_argument("--host", default="127.0.0.1")
+    sub.add_argument("--port", type=int, default=8787)
+    sub.add_argument("--store", default="data/online")
+    sub.set_defaults(handler=command_serve)
 
     sub = commands.add_parser("report", help="Report attribution metrics")
     sub.add_argument("--experiment", required=True)

@@ -2,6 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from evalplant.bugsinpy import (
     _docker_agent_command,
@@ -9,9 +11,11 @@ from evalplant.bugsinpy import (
     _is_test_path,
     _validate,
 )
-from evalplant.core import normalize_trajectory, signal_bundle
+from evalplant.core import classify_step, normalize_trajectory, signal_bundle
 from evalplant.db import connect, import_run, save_annotation, save_attribution
 from evalplant.metrics import report
+from evalplant.online import ingest_payload
+from evalplant.judge import analyze_trajectory
 
 
 class PipelineTest(unittest.TestCase):
@@ -91,6 +95,7 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 signal_bundle(steps)["terminal_statuses"], ["LimitsExceeded"]
             )
+            connection.close()
 
     def test_trusted_verifier_and_test_path_detection(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -100,6 +105,203 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(result.returncode, 7)
             self.assertTrue(_is_test_path("tests/test_parser.py"))
             self.assertFalse(_is_test_path("src/latest.py"))
+            self.assertEqual(
+                classify_step("assistant", "", "./evalplant_test.sh"),
+                "test_execution",
+            )
+            self.assertEqual(
+                classify_step("assistant", "", "cat evalplant_test.sh"),
+                "file_read",
+            )
+            self.assertEqual(
+                classify_step(
+                    "tool", '{"returncode": 0, "output": "error docs"}', None
+                ),
+                "tool_output",
+            )
+            self.assertEqual(
+                classify_step("assistant", "", "cd /task 2>/dev/null; ls"),
+                "file_read",
+            )
+
+    def test_imports_harbor_atif_with_verifier_and_raw_events(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trial = root / "job" / "hello-world__abc"
+            session = trial / "agent" / "dsh-sessions" / "session-1"
+            verifier = trial / "verifier"
+            session.mkdir(parents=True)
+            verifier.mkdir()
+            atif = {
+                "schema_version": "ATIF-v1.7",
+                "session_id": "session-1",
+                "agent": {
+                    "name": "dsh-minimal",
+                    "version": "0.1.0rc7",
+                    "model_name": "deepseek-v4-flash",
+                },
+                "steps": [
+                    {"step_id": 1, "source": "user", "message": "Create hello.txt"},
+                    {
+                        "step_id": 2,
+                        "source": "agent",
+                        "message": "(tool use)",
+                        "tool_calls": [
+                            {
+                                "tool_call_id": "call-1",
+                                "function_name": "bash",
+                                "arguments": {"command": "printf hi > hello.txt"},
+                            }
+                        ],
+                        "observation": {
+                            "results": [{"source_call_id": "call-1", "content": ""}]
+                        },
+                    },
+                ],
+            }
+            (trial / "agent" / "trajectory.json").write_text(json.dumps(atif))
+            (session / "session.jsonl").write_text('{"type":"request/header"}\n')
+            (verifier / "test-stdout.txt").write_text("passed\n")
+            (trial / "result.json").write_text(
+                json.dumps(
+                    {
+                        "id": "trial-id",
+                        "task_name": "harbor/hello-world",
+                        "trial_name": "hello-world__abc",
+                        "agent_info": {
+                            "name": "dsh-minimal",
+                            "version": "0.1.0rc7",
+                            "model_info": {"name": "deepseek-v4-flash"},
+                        },
+                        "agent_result": {"cost_usd": None},
+                        "verifier_result": {"rewards": {"reward": 1.0}},
+                    }
+                )
+            )
+
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, trial.parent, "harbor-smoke")[0]
+            row = connection.execute(
+                "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
+            ).fetchone()
+            self.assertEqual(row["base_task_id"], "harbor/hello-world")
+            self.assertEqual(row["health_status"], "VALID")
+            self.assertEqual(row["verdict"], "PASS")
+            self.assertTrue(row["raw_event_sha256"])
+            step = connection.execute(
+                "SELECT * FROM steps WHERE trajectory_id=? AND step_index=2",
+                (trajectory_id,),
+            ).fetchone()
+            self.assertEqual(step["action_type"], "file_edit")
+            self.assertEqual(step["tool_name"], "bash")
+            self.assertEqual(
+                report(connection, "harbor-smoke", "test")["average_reward"], 1.0
+            )
+            connection.close()
+
+    def test_online_known_failure_is_queued(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result = ingest_payload(
+                root / "evalplant.db",
+                root / "online",
+                {
+                    "experiment": "online-shadow",
+                    "trajectory": {
+                        "schema_version": "ATIF-v1.7",
+                        "session_id": "session-1",
+                        "agent": {"name": "dsh-minimal", "version": "0.1.0rc7"},
+                        "steps": [
+                            {"step_id": 1, "source": "user", "message": "Fix it"}
+                        ],
+                    },
+                    "result": {
+                        "id": "online-trial",
+                        "task_name": "shadow/task-1",
+                        "trial_name": "task-1__one",
+                        "agent_result": {"metadata": {"online": True}},
+                        "verifier_result": {"rewards": {"reward": 0.0}},
+                    },
+                },
+            )
+            self.assertEqual(result["health_status"], "VALID")
+            self.assertEqual(result["verdict"], "FAIL")
+            self.assertTrue(result["attribution_queued"])
+            connection = connect(root / "evalplant.db")
+            status = connection.execute(
+                "SELECT status FROM attribution_jobs WHERE trajectory_id=?",
+                (result["trajectory_id"],),
+            ).fetchone()["status"]
+            self.assertEqual(status, "PENDING")
+            connection.close()
+
+            unknown = ingest_payload(
+                root / "evalplant.db",
+                root / "online",
+                {
+                    "experiment": "online-shadow",
+                    "task_id": "shadow/task-unknown",
+                    "trajectory": {
+                        "schema_version": "ATIF-v1.7",
+                        "session_id": "session-unknown",
+                        "steps": [{"step_id": 1, "source": "user", "message": "Help"}],
+                    },
+                },
+            )
+            self.assertEqual(unknown["verdict"], "UNKNOWN")
+            self.assertFalse(unknown["attribution_queued"])
+
+    def test_attribution_uses_one_judge_call(self):
+        with tempfile.TemporaryDirectory() as temp:
+            trajectory = Path(temp) / "trajectory.json"
+            trajectory.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "ATIF-v1.7",
+                        "steps": [
+                            {"step_id": 1, "source": "user", "message": "Fix it"},
+                            {
+                                "step_id": 2,
+                                "source": "agent",
+                                "message": "I will submit without tests",
+                            },
+                        ],
+                    }
+                )
+            )
+            create = Mock(
+                return_value=SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=json.dumps(
+                                    {
+                                        "attributable": True,
+                                        "first_error_step": 2,
+                                        "stage": "iterative_verification",
+                                        "mechanism": "validation_retreat",
+                                        "subcategory": "verification_abandonment",
+                                        "summary": "Submitted without verification",
+                                        "evidence_step_ids": [2],
+                                        "confidence": 0.8,
+                                    }
+                                )
+                            )
+                        )
+                    ]
+                )
+            )
+            client = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+            )
+            with (
+                patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}),
+                patch("openai.OpenAI", return_value=client),
+            ):
+                result = analyze_trajectory(trajectory)
+
+            create.assert_called_once()
+            self.assertTrue(result["deterministic_evidence"]["verification_missing"])
 
     def test_docker_agent_mounts_only_task_and_output(self):
         workspace = Path("/host/evalplant/.workspaces/fastapi-1")
@@ -113,7 +315,11 @@ class PipelineTest(unittest.TestCase):
             20,
             "linux/amd64",
         )
-        mounts = [command[index + 1] for index, item in enumerate(command) if item == "--mount"]
+        mounts = [
+            command[index + 1]
+            for index, item in enumerate(command)
+            if item == "--mount"
+        ]
         self.assertEqual(
             mounts,
             [
@@ -149,9 +355,7 @@ class PipelineTest(unittest.TestCase):
                 "type=bind,src=/host/evalplant/data/oracle,dst=/oracle",
             ],
         )
-        self.assertNotIn(
-            "type=bind,src=/host/evalplant/.workspaces,dst=/task", mounts
-        )
+        self.assertNotIn("type=bind,src=/host/evalplant/.workspaces,dst=/task", mounts)
 
 
 if __name__ == "__main__":

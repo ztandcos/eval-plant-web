@@ -1,148 +1,139 @@
 # EvalPlant
 
-EvalPlant 是一个面向 Coding Agent 的离线失败归因平台。它使用 BugsInPy
-提供可复现的真实缺陷，让 mini-SWE-agent 完整执行修复任务；任务失败后，再由
-DeepSeek Judge 定位轨迹中最早的关键错误，并与人工标注进行比较。
-
-当前版本已经打通以下流程：
+EvalPlant 是一套面向 Coding Agent 的评测基础设施。Harbor 负责把任务放进隔离容器、运行 DeepSeek Harness、执行 Verifier；EvalPlant 负责保存和索引轨迹、区分运行故障与模型失败、提取客观证据、做失败归因和统计。
 
 ```text
-BugsInPy 任务准备 → 隔离运行 Agent → 保存轨迹与测试结果
-                                      ↓
-人工标注 ← 指标评估 ← DeepSeek 失败归因
+Harbor + DeepSeek Harness Minimal（rc6 / rc7）
+                     ↓
+      原始 Harness JSONL + ATIF-v1.7 + Verifier
+                     ↓
+        运行健康度 ─ 任务结果 ─ 确定性证据
+                                  ↓
+                         单次 DeepSeek Judge
+                                  ↓
+                    人工校准、对比统计、报告
 ```
+
+这个仓库不做插件生成、自动改 Prompt、强化学习或失败后的自我进化。它只把“跑得是否正常、任务是否成功、失败在哪里、不同版本差多少”做扎实。
+
+## 关键边界
+
+DeepSeek Harness 使用官方极简模式：只有持久 Bash 和字符串编辑器，没有视觉、Skills 或 MCP。主版本固定为 `deepseek-harness-sdk==0.1.0rc7`，A/B 时显式切换到 rc6。
+
+原始 Harness JSONL 永不改写，ATIF-v1.7 是统一分析格式。Verifier 决定 PASS/FAIL；没有 Verifier、用户反馈或人工结果的在线轨迹记为 UNKNOWN。Judge 只解释已知失败，不负责判定成功。
+
+失败归因不是“两次都让 AI 猜”。代码先确定性提取工具错误、完全重复调用、文件编辑、测试执行与结果、缺少验证和超时信号；随后一次 Judge 阅读完整轨迹和证据包，可选择任意真实步骤，也可以在证据不足时 ABSTAIN。
+
+归因标签采用《Why LLM Agents Fail》代码本：3 个阶段、9 个主类别、25 个叶子类别。基础设施、Harness 和环境故障在归因前剔除。
 
 ## 安装
 
-本机需要安装 Docker 和 uv。安装项目依赖后可以查看所有命令：
+本机需要 Python 3.9+、uv 和 Docker：
 
 ```bash
 uv sync
 uv run evalplant --help
 ```
 
-运行 Agent 或 Judge 前，需要在终端设置 DeepSeek API Key。不要把 Key 写入
-代码、镜像或 Git：
+密钥只放在当前终端环境，不要写进配置或 Git：
 
 ```bash
-export DEEPSEEK_API_KEY="你的新 API Key"
+export DEEPSEEK_API_KEY="你的 Key"
 ```
 
-mini-SWE-agent 默认使用 `deepseek/deepseek-v4-flash`，归因 Judge 默认使用
-`deepseek-v4-pro`，都可以通过命令行参数覆盖。
+## 一次真实离线运行
 
-## 一、准备 Benchmark
-
-BugsInPy 只需要下载一次：
+Harbor 适配器位于独立工作区 `/Users/shaw/Desktop/harbor-dsh-evalplant`。下面的 smoke job 会运行一个真实容器，安装 rc7，调用 `deepseek-v4-flash` 创建文件，再由 Verifier 判分：
 
 ```bash
-git clone https://github.com/soarsmu/BugsInPy.git .benchmarks/BugsInPy
+cd /Users/shaw/Desktop/harbor-dsh-evalplant
+uv run harbor run \
+  -c examples/configs/agents/dsh-minimal-job.yaml \
+  --job-name evalplant-dsh-rc7-smoke \
+  -y
 ```
 
-固定 Agent 镜像也只需要构建一次。镜像包含 EvalPlant 执行器、
-mini-SWE-agent、uv、Git 和基础 Python 运行时，不包含 benchmark、具体任务、
-数据库、Oracle 数据或其他任务环境：
+把完整 Harbor job 导入 EvalPlant：
 
 ```bash
-docker build --platform linux/amd64 -t evalplant-agent:0.2 .
+cd /Users/shaw/eval-plant
+uv run evalplant --db data/evalplant-harbor.db import \
+  /Users/shaw/Desktop/harbor-dsh-evalplant/jobs/evalplant-dsh-rc7-smoke \
+  --experiment rc7-smoke \
+  --agent-model deepseek-v4-flash
+
+uv run evalplant --db data/evalplant-harbor.db report \
+  --experiment rc7-smoke
 ```
 
-## 二、准备一个任务
+EvalPlant 会一起索引 Harness JSONL 的路径和 SHA-256、ATIF 路径和 SHA-256、Verifier 日志、SDK 版本、模型名、开始结束时间、reward、健康状态与标准化步骤。
 
-下面的命令只准备 `fastapi-5`，并把任务源码及其 Python 环境写入独立目录：
+## 失败归因
+
+只分析“运行健康且结果为 FAIL/TIMEOUT”的轨迹：
 
 ```bash
-uv run evalplant docker-prepare \
-  --bugsinpy-root .benchmarks/BugsInPy \
-  --project fastapi \
-  --bug 5 \
-  --workspace .workspaces/fastapi-5 \
-  --oracle-dir data/oracle
+uv run evalplant --db data/evalplant-harbor.db analyze \
+  --experiment rc7-failures \
+  --model deepseek-v4-pro
 ```
 
-可信的准备容器会看到三个挂载点：BugsInPy 位于 `/bench`，当前任务位于
-`/task`，Oracle 输出位于 `/oracle`。BugsInPy 的 checkout 脚本需要临时修改
-benchmark 目录，因此准备阶段的 `/bench` 是可写的；真正运行 Agent 时不会挂载
-`/bench` 或 `/oracle`。
-
-准备程序会确认缺陷版本测试失败、修复版本测试通过，然后删除原始 Git 历史和
-修复提交信息。任务虚拟环境直接构建在容器路径 `/task`，因此以后无论宿主机目录
-位于哪里，都可以稳定挂载到新的 Agent 容器中。
-
-## 三、运行一个 Agent 任务
-
-一个容器只运行一个任务。下面的命令把当前任务动态挂载到 `/task`，把本次产物
-目录挂载到 `/output`：
+人工标注同时记录关键步骤、阶段、主类别、叶子类别和证据步骤：
 
 ```bash
-uv run evalplant docker-run .workspaces/fastapi-5 \
-  --experiment fastapi-5-flash \
-  --run-dir data/raw/fastapi-5-flash \
-  --step-limit 20
-```
-
-Agent 容器使用只读根文件系统，只能修改当前 `/task` 和 `/output`。它看不到其他
-任务目录、BugsInPy、Oracle、EvalPlant 源码和宿主机数据库。容器结束后，宿主机
-会把结果导入 SQLite。
-
-`--step-limit 20` 表示最多允许 20 次 Agent 决策循环；设为 `0` 表示使用
-mini-SWE-agent 的默认限制。当前版本只实现单任务执行和隔离边界，尚未加入并发
-队列或容器调度。
-
-每次运行会产生这些主要文件：
-
-```text
-trajectory.traj.json  Agent 原始轨迹
-agent.log              Agent 运行日志
-final.patch            Agent 最终代码改动
-baseline_test.log      修改前的失败测试
-final_test.log         修改后的验证测试
-verdict.json           PASS、FAIL、TIMEOUT 或 INFRA_ERROR
-```
-
-## 四、分析失败并归因
-
-归因在宿主机执行，只分析 `FAIL` 或 `TIMEOUT` 轨迹：
-
-```bash
-uv run evalplant analyze --experiment fastapi-5-flash
-```
-
-Judge 采用双层归因。第一层从完整轨迹中筛选候选错误步骤，第二层结合前后文确定
-最早的关键错误、失败阶段、失败机制、证据步骤和置信度。结果会缓存到 SQLite；
-需要重新分析时使用 `--force`。
-
-在终端查看某条轨迹及归因结果：
-
-```bash
-uv run evalplant inspect TRAJECTORY_ID
-```
-
-## 五、人工标注与评估
-
-只需要给失败样本做人工标注：
-
-```bash
-uv run evalplant annotate TRAJECTORY_ID \
+uv run evalplant --db data/evalplant-harbor.db annotate TRAJECTORY_ID \
   --split test \
   --step 12 \
-  --stage fault_localization \
-  --mechanism wrong_assumption \
+  --phase repair \
+  --category implementation_detail_defects \
+  --subcategory control_flow \
   --evidence 10,12,14 \
-  --oracle-used
+  --evidence-pass yes
 ```
 
-生成归因准确率、阶段和机制 Macro-F1、证据通过率及归因覆盖率：
+建议建立 60 条人工金标失败轨迹：20 条 dev 用于校准 Prompt 和标签理解，40 条 test 保持封存。报告分别给归因准确率和归因覆盖率，ABSTAIN 不伪装成正确归因。
+
+## 在线影子评测
+
+在线模式接收“任务结束后的整条轨迹”，不做逐步拦截。服务默认只监听本机：
 
 ```bash
-uv run evalplant report --experiment fastapi-5-flash --split test
+uv run evalplant --db data/evalplant-online.db serve \
+  --store data/online \
+  --port 8787
 ```
 
-已有的 mini-SWE-agent 运行目录也可以直接导入：
+向 `POST /ingest` 发送 JSON：
+
+```json
+{
+  "experiment": "online-shadow",
+  "trajectory": {"schema_version": "ATIF-v1.7", "steps": []},
+  "result": {"task_name": "task-1", "verifier_result": {"rewards": {"reward": 0}}},
+  "raw_events": "{\"type\":\"request/header\"}\n",
+  "verifier_log": "failed"
+}
+```
+
+已知失败会自动进入 SQLite 队列。一个单独进程处理归因：
 
 ```bash
-uv run evalplant import /path/to/run --experiment exp-001
+uv run evalplant --db data/evalplant-online.db worker \
+  --model deepseek-v4-pro
 ```
 
-原始轨迹和日志保存在本地文件系统中；SQLite 只保存文件路径、哈希、标准化步骤
-摘要、Judge 归因和人工标注。
+队列只有四个状态：PENDING、RUNNING、DONE、FAILED。当前单机 SQLite + WAL 足够支撑作品集演示；出现多机 worker 或明显锁竞争时再换 PostgreSQL/Redis，不提前引入 Kafka、Celery 或 ClickHouse。
+
+## 正式 rc6 / rc7 对比
+
+第一轮正式实验使用 Terminal-Bench 2.1 的 30 个任务，按公开难度分成 easy/medium/hard 各 10 个。相同模型、相同任务和参数下，rc6 与 rc7 各重复 3 次，共 180 条轨迹，并交错运行以减小滚动模型别名和时间窗口带来的污染。
+
+主指标是官方平均 reward 和“同一任务三次全部成功”的 pass-all-repeats；同时报告“至少一次成功”的 pass@3，不能把它当稳定性。延迟、token、工具错误和重复调用只用于解释差异，不混成一个无法说明含义的综合分。
+
+## 测试
+
+```bash
+uv run python -m unittest discover -s tests -v
+```
+
+测试覆盖旧轨迹兼容、Harbor ATIF 导入、Verifier/健康状态分离、原始 JSONL 哈希、确定性步骤解析、SQLite 队列和在线已知失败入队。
