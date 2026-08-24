@@ -18,6 +18,7 @@ from .bugsinpy import (
     run_agent,
     run_agent_in_docker,
 )
+from .companion import evaluate_companion, export_companion_labels, generate_companion
 from .core import (
     CATEGORIES,
     PHASES,
@@ -76,6 +77,32 @@ def command_import_labels(
 ) -> None:
     count = import_annotations(connection, _path(args.path))
     console.print("Imported [bold green]%s[/bold green] human labels" % count)
+
+
+def command_companion_eval(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    result = evaluate_companion(
+        _path(args.cases),
+        _path(args.responses),
+        _path(args.output),
+        args.model,
+    )
+    console.print_json(data=result["summary"])
+
+
+def command_companion_generate(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    count = generate_companion(_path(args.cases), _path(args.output), args.model)
+    console.print("Generated [bold green]%s[/bold green] companion responses" % count)
+
+
+def command_companion_labels(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    count = export_companion_labels(_path(args.cases), _path(args.output))
+    console.print("Exported [bold green]%s[/bold green] companion cases" % count)
 
 
 def command_inspect(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
@@ -311,6 +338,11 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
     ):
         table.add_row(key, _percent(result[key]))
     console.print(Panel(table, title="%s · %s" % (args.experiment, args.split)))
+    if result["security_metrics"]:
+        security = Table("Security metric", "Rate", "Samples")
+        for name, metric in result["security_metrics"].items():
+            security.add_row(name, _percent(metric["mean"]), str(metric["samples"]))
+        console.print(Panel(security, title="Red-team metrics"))
 
 
 def command_compare(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
@@ -450,6 +482,34 @@ def parser() -> argparse.ArgumentParser:
     sub = commands.add_parser("import-labels", help="Import completed human labels")
     sub.add_argument("path")
     sub.set_defaults(handler=command_import_labels)
+
+    sub = commands.add_parser(
+        "companion-eval", help="Score social-companion responses with a Judge"
+    )
+    sub.add_argument("--cases", default="benchmarks/companion/cases.jsonl")
+    sub.add_argument("--responses", required=True)
+    sub.add_argument("--output", required=True)
+    sub.add_argument(
+        "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
+    )
+    sub.set_defaults(handler=command_companion_eval)
+
+    sub = commands.add_parser(
+        "companion-generate", help="Generate responses for companion cases"
+    )
+    sub.add_argument("--cases", default="benchmarks/companion/cases.jsonl")
+    sub.add_argument("--output", required=True)
+    sub.add_argument(
+        "--model", default=os.getenv("EVALPLANT_AGENT_MODEL", "deepseek-v4-flash")
+    )
+    sub.set_defaults(handler=command_companion_generate)
+
+    sub = commands.add_parser(
+        "companion-labels", help="Export a blank human calibration sheet"
+    )
+    sub.add_argument("--cases", default="benchmarks/companion/cases.jsonl")
+    sub.add_argument("--output", required=True)
+    sub.set_defaults(handler=command_companion_labels)
 
     sub = commands.add_parser("inspect", help="Show one normalized trajectory")
     sub.add_argument("trajectory")

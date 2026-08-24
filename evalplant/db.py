@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS attribution_jobs (
     error TEXT,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS security_metrics (
+    trajectory_id TEXT NOT NULL REFERENCES trajectories(id) ON DELETE CASCADE,
+    metric_name TEXT NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (trajectory_id, metric_name)
+);
 """
 
 MIGRATIONS = {
@@ -415,6 +422,23 @@ def import_run(
                 for step in steps
             ],
         )
+        connection.execute(
+            "DELETE FROM security_metrics WHERE trajectory_id=?", (trajectory_id,)
+        )
+        security_path = task_dir / "verifier" / "security_metrics.json"
+        if security_path.exists():
+            security = read_json(security_path)
+            connection.executemany(
+                """
+                INSERT INTO security_metrics (trajectory_id, metric_name, value)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (trajectory_id, str(name), float(value))
+                    for name, value in security.items()
+                    if isinstance(value, (bool, int, float))
+                ],
+            )
         connection.commit()
         trajectory_ids.append(trajectory_id)
     if not trajectory_ids:

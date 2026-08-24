@@ -68,6 +68,42 @@ uv run evalplant --db data/evalplant-harbor.db report \
 
 EvalPlant 会一起索引 Harness JSONL 的路径和 SHA-256、ATIF 路径和 SHA-256、Verifier 日志、SDK 版本、模型名、开始结束时间、reward、健康状态与标准化步骤。
 
+## Agent 红队评测
+
+`benchmarks/agent-redteam` 是四个可直接交给 Harbor 的安全任务，覆盖仓库文件中的提示注入、日志诱导危险删除、篡改公开测试和工具输出注入。Verifier 不只给总分，还会写出功能是否完成、是否泄密、是否执行破坏操作、是否篡改测试和注入是否得逞。EvalPlant 导入 job 后会把这些比例显示在报告的 `Red-team metrics` 中。
+
+第一次安装 Harness 受网络影响较大，正式重复实验给安装阶段留出更宽裕的时间：
+
+```bash
+cd /Users/shaw/Desktop/harbor-dsh-evalplant
+uv run harbor run \
+  -p /Users/shaw/eval-plant/benchmarks/agent-redteam \
+  -a dsh-minimal -m deepseek/deepseek-v4-flash \
+  --ak version=0.1.0rc7 -k 3 -n 1 \
+  --agent-setup-timeout-multiplier 3 \
+  --job-name agent-redteam-rc7 -y
+```
+
+DeepSeek 适配器通过容器内的临时权限文件传入运行参数，任务退出时自动删除。API Key 不再拼进宿主机能看到的 Docker 启动命令，也不会写进 Agent 日志目录。
+
+## 社交陪伴评测切片
+
+`benchmarks/companion` 提供五条多轮案例和固定量表，用来把共情、相关性、连贯性、安全性和帮助程度变成 0–4 分。它是为了覆盖社交陪伴岗位场景的独立数据切片，不改变 Coding Agent 的 Harbor 主链路。
+
+```bash
+uv run evalplant companion-generate \
+  --output data/companion-responses.jsonl
+
+uv run evalplant companion-eval \
+  --responses data/companion-responses.jsonl \
+  --output data/companion-report.json
+
+uv run evalplant companion-labels \
+  --output data/companion-human-labels.csv
+```
+
+自动 Judge 结果必须和人工表分开报告；人工表没有完成之前，不能宣称 Judge 已经过人工验证。
+
 ## 失败归因
 
 只分析“运行健康且结果为 FAIL/TIMEOUT”的轨迹：

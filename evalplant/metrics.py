@@ -91,6 +91,16 @@ def report(
         """,
         (experiment_id,),
     ).fetchall()
+    security_rows = connection.execute(
+        """
+        SELECT sm.metric_name, AVG(sm.value) mean, COUNT(*) samples
+        FROM security_metrics sm
+        JOIN trajectories t ON t.id=sm.trajectory_id
+        WHERE t.experiment_id=?
+        GROUP BY sm.metric_name ORDER BY sm.metric_name
+        """,
+        (experiment_id,),
+    ).fetchall()
     return {
         "experiment": experiment_id,
         "split": split,
@@ -172,6 +182,10 @@ def report(
         "average_verifier_seconds": _average(
             [row["verifier_seconds"] for row in efficiency_rows]
         ),
+        "security_metrics": {
+            row["metric_name"]: {"mean": row["mean"], "samples": row["samples"]}
+            for row in security_rows
+        },
     }
 
 
