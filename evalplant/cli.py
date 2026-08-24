@@ -37,7 +37,7 @@ from .db import (
     save_attribution,
 )
 from .judge import analyze_trajectory
-from .metrics import report
+from .metrics import compare_experiments, report
 from .online import serve
 
 console = Console()
@@ -232,6 +232,10 @@ def _percent(value: Optional[float]) -> str:
     return "n/a" if value is None else "%.1f%%" % (value * 100)
 
 
+def _number_text(value: Optional[float], suffix: str = "") -> str:
+    return "n/a" if value is None else "%s%s" % (f"{value:,.1f}", suffix)
+
+
 def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
     result = report(connection, args.experiment, args.split)
     table = Table("Metric", "Value")
@@ -239,6 +243,35 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
     table.add_row("Average reward", _percent(result["average_reward"]))
     table.add_row("Pass all repeats", _percent(result["pass_all_repeats"]))
     table.add_row("Pass@3", _percent(result["pass_at_3"]))
+    table.add_row("Average steps", _number_text(result["average_steps"]))
+    table.add_row("Average tool errors", _number_text(result["average_tool_errors"]))
+    table.add_row(
+        "Average input / cache tokens",
+        "%s / %s"
+        % (
+            _number_text(result["average_input_tokens"]),
+            _number_text(result["average_cache_tokens"]),
+        ),
+    )
+    table.add_row(
+        "Average output tokens", _number_text(result["average_output_tokens"])
+    )
+    table.add_row(
+        "Environment / agent setup",
+        "%s / %s"
+        % (
+            _number_text(result["average_environment_setup_seconds"], "s"),
+            _number_text(result["average_agent_setup_seconds"], "s"),
+        ),
+    )
+    table.add_row(
+        "Agent / verifier execution",
+        "%s / %s"
+        % (
+            _number_text(result["average_agent_execution_seconds"], "s"),
+            _number_text(result["average_verifier_seconds"], "s"),
+        ),
+    )
     table.add_row(
         "Annotations / evaluated",
         "%s / %s" % (result["annotations"], result["evaluated"]),
@@ -254,6 +287,46 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
     ):
         table.add_row(key, _percent(result[key]))
     console.print(Panel(table, title="%s · %s" % (args.experiment, args.split)))
+
+
+def command_compare(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    result = compare_experiments(connection, args.experiment_a, args.experiment_b)
+    table = Table(
+        "Task", "Reward A/B", "Input tokens A/B", "Agent sec A/B", "Steps A/B"
+    )
+    for row in result["tasks"]:
+        table.add_row(
+            row["task_id"],
+            "%s / %s" % (_number_text(row["reward_a"]), _number_text(row["reward_b"])),
+            "%s / %s"
+            % (
+                _number_text(row["input_tokens_a"]),
+                _number_text(row["input_tokens_b"]),
+            ),
+            "%s / %s"
+            % (
+                _number_text(row["agent_seconds_a"]),
+                _number_text(row["agent_seconds_b"]),
+            ),
+            "%s / %s" % (_number_text(row["steps_a"]), _number_text(row["steps_b"])),
+        )
+    console.print(
+        Panel(
+            table,
+            title="%s (A) vs %s (B)" % (args.experiment_a, args.experiment_b),
+        )
+    )
+    console.print(
+        "Average reward: %s vs %s"
+        % (
+            _percent(result["summary_a"]["average_reward"]),
+            _percent(result["summary_b"]["average_reward"]),
+        )
+    )
+    if result["only_a"] or result["only_b"]:
+        console.print(
+            "Unpaired tasks: A=%s B=%s" % (result["only_a"], result["only_b"])
+        )
 
 
 def command_prepare(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
@@ -392,6 +465,11 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--experiment", required=True)
     sub.add_argument("--split", choices=("dev", "test"), default="test")
     sub.set_defaults(handler=command_report)
+
+    sub = commands.add_parser("compare", help="Compare two experiments task by task")
+    sub.add_argument("--experiment-a", required=True)
+    sub.add_argument("--experiment-b", required=True)
+    sub.set_defaults(handler=command_compare)
 
     sub = commands.add_parser("prepare", help="Prepare and sanitize one BugsInPy task")
     sub.add_argument("--bugsinpy-root", required=True)

@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS trajectories (
     model_name TEXT,
     started_at TEXT,
     finished_at TEXT,
+    input_tokens INTEGER,
+    cache_tokens INTEGER,
+    output_tokens INTEGER,
+    environment_setup_seconds REAL,
+    agent_setup_seconds REAL,
+    agent_execution_seconds REAL,
+    verifier_seconds REAL,
     UNIQUE(experiment_id, task_id)
 );
 
@@ -104,6 +111,13 @@ MIGRATIONS = {
         "model_name": "TEXT",
         "started_at": "TEXT",
         "finished_at": "TEXT",
+        "input_tokens": "INTEGER",
+        "cache_tokens": "INTEGER",
+        "output_tokens": "INTEGER",
+        "environment_setup_seconds": "REAL",
+        "agent_setup_seconds": "REAL",
+        "agent_execution_seconds": "REAL",
+        "verifier_seconds": "REAL",
     },
     "steps": {"tool_name": "TEXT", "tool_arguments": "TEXT"},
     "attributions": {"subcategory": "TEXT"},
@@ -178,6 +192,21 @@ def _number(value: Any) -> Optional[float]:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _duration_seconds(value: Any) -> Optional[float]:
+    if not isinstance(value, dict):
+        return None
+    started = value.get("started_at")
+    finished = value.get("finished_at")
+    if not started or not finished:
+        return None
+    try:
+        start = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(str(finished).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max(0.0, (finish - start).total_seconds())
+
+
 def _harbor_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
     trial_dir = raw_path.parent.parent
     result_path = trial_dir / "result.json"
@@ -227,6 +256,13 @@ def _harbor_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
         "final_log_path": next((path for path in final_logs if path.exists()), None),
         "cost": agent_result.get("cost_usd"),
         "api_calls": None,
+        "input_tokens": agent_result.get("n_input_tokens"),
+        "cache_tokens": agent_result.get("n_cache_tokens"),
+        "output_tokens": agent_result.get("n_output_tokens"),
+        "environment_setup_seconds": _duration_seconds(result.get("environment_setup")),
+        "agent_setup_seconds": _duration_seconds(result.get("agent_setup")),
+        "agent_execution_seconds": _duration_seconds(result.get("agent_execution")),
+        "verifier_seconds": _duration_seconds(result.get("verifier")),
     }
 
 
@@ -255,6 +291,13 @@ def _legacy_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
         "final_log_path": task_dir / "final_test.log",
         "cost": stats.get("instance_cost"),
         "api_calls": stats.get("api_calls"),
+        "input_tokens": stats.get("input_tokens"),
+        "cache_tokens": stats.get("cache_tokens"),
+        "output_tokens": stats.get("output_tokens"),
+        "environment_setup_seconds": None,
+        "agent_setup_seconds": None,
+        "agent_execution_seconds": None,
+        "verifier_seconds": None,
     }
 
 
@@ -293,8 +336,11 @@ def import_run(
                 id, experiment_id, task_id, verdict, raw_path, raw_sha256,
                 final_patch_path, baseline_log_path, final_log_path, cost, api_calls,
                 base_task_id, trial_name, health_status, reward, raw_event_path,
-                raw_event_sha256, agent_version, model_name, started_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                raw_event_sha256, agent_version, model_name, started_at, finished_at,
+                input_tokens, cache_tokens, output_tokens, environment_setup_seconds,
+                agent_setup_seconds, agent_execution_seconds, verifier_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(experiment_id, task_id) DO UPDATE SET
                 verdict=excluded.verdict, raw_path=excluded.raw_path,
                 raw_sha256=excluded.raw_sha256, final_patch_path=excluded.final_patch_path,
@@ -305,7 +351,13 @@ def import_run(
                 reward=excluded.reward, raw_event_path=excluded.raw_event_path,
                 raw_event_sha256=excluded.raw_event_sha256,
                 agent_version=excluded.agent_version, model_name=excluded.model_name,
-                started_at=excluded.started_at, finished_at=excluded.finished_at
+                started_at=excluded.started_at, finished_at=excluded.finished_at,
+                input_tokens=excluded.input_tokens, cache_tokens=excluded.cache_tokens,
+                output_tokens=excluded.output_tokens,
+                environment_setup_seconds=excluded.environment_setup_seconds,
+                agent_setup_seconds=excluded.agent_setup_seconds,
+                agent_execution_seconds=excluded.agent_execution_seconds,
+                verifier_seconds=excluded.verifier_seconds
             """,
             (
                 trajectory_id,
@@ -329,6 +381,13 @@ def import_run(
                 metadata["model_name"],
                 metadata["started_at"],
                 metadata["finished_at"],
+                metadata["input_tokens"],
+                metadata["cache_tokens"],
+                metadata["output_tokens"],
+                metadata["environment_setup_seconds"],
+                metadata["agent_setup_seconds"],
+                metadata["agent_execution_seconds"],
+                metadata["verifier_seconds"],
             ),
         )
         connection.execute("DELETE FROM steps WHERE trajectory_id=?", (trajectory_id,))

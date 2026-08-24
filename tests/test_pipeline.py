@@ -13,7 +13,7 @@ from evalplant.bugsinpy import (
 )
 from evalplant.core import classify_step, normalize_trajectory, signal_bundle
 from evalplant.db import connect, import_run, save_annotation, save_attribution
-from evalplant.metrics import report
+from evalplant.metrics import compare_experiments, report
 from evalplant.online import ingest_payload
 from evalplant.judge import analyze_trajectory
 
@@ -174,6 +174,22 @@ class PipelineTest(unittest.TestCase):
                             "model_info": {"name": "deepseek-v4-flash"},
                         },
                         "agent_result": {"cost_usd": None},
+                        "environment_setup": {
+                            "started_at": "2026-01-01T00:00:00Z",
+                            "finished_at": "2026-01-01T00:00:02Z",
+                        },
+                        "agent_setup": {
+                            "started_at": "2026-01-01T00:00:02Z",
+                            "finished_at": "2026-01-01T00:00:05Z",
+                        },
+                        "agent_execution": {
+                            "started_at": "2026-01-01T00:00:05Z",
+                            "finished_at": "2026-01-01T00:00:12Z",
+                        },
+                        "verifier": {
+                            "started_at": "2026-01-01T00:00:12Z",
+                            "finished_at": "2026-01-01T00:00:13Z",
+                        },
                         "verifier_result": {"rewards": {"reward": 1.0}},
                     }
                 )
@@ -188,6 +204,7 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(row["health_status"], "VALID")
             self.assertEqual(row["verdict"], "PASS")
             self.assertTrue(row["raw_event_sha256"])
+            self.assertEqual(row["agent_execution_seconds"], 7.0)
             step = connection.execute(
                 "SELECT * FROM steps WHERE trajectory_id=? AND step_index=2",
                 (trajectory_id,),
@@ -197,6 +214,8 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 report(connection, "harbor-smoke", "test")["average_reward"], 1.0
             )
+            comparison = compare_experiments(connection, "harbor-smoke", "harbor-smoke")
+            self.assertEqual(comparison["tasks"][0]["steps_a"], 2.0)
             connection.close()
 
     def test_online_known_failure_is_queued(self):
