@@ -1,3 +1,4 @@
+import csv
 import json
 import tempfile
 import unittest
@@ -12,7 +13,14 @@ from evalplant.bugsinpy import (
     _validate,
 )
 from evalplant.core import classify_step, normalize_trajectory, signal_bundle
-from evalplant.db import connect, import_run, save_annotation, save_attribution
+from evalplant.db import (
+    connect,
+    export_annotation_template,
+    import_annotations,
+    import_run,
+    save_annotation,
+    save_attribution,
+)
 from evalplant.metrics import compare_experiments, report
 from evalplant.online import ingest_payload
 from evalplant.judge import analyze_trajectory
@@ -95,6 +103,85 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 signal_bundle(steps)["terminal_statuses"], ["LimitsExceeded"]
             )
+            connection.close()
+
+    def test_annotation_csv_round_trip_and_repeat_stability(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            connection = connect(root / "evalplant.db")
+            connection.execute(
+                "INSERT INTO experiments VALUES ('repeat-exp', 'agent', 'judge', 'now')"
+            )
+            for index, reward in enumerate((1.0, 0.0, 1.0), start=1):
+                trajectory_id = "trial-%s" % index
+                connection.execute(
+                    """
+                    INSERT INTO trajectories (
+                        id, experiment_id, task_id, base_task_id, verdict,
+                        health_status, reward, raw_path, raw_sha256
+                    ) VALUES (?, 'repeat-exp', ?, 'task-a', ?, 'VALID', ?, '/tmp/x', 'x')
+                    """,
+                    (
+                        trajectory_id,
+                        "task-a::%s" % index,
+                        "PASS" if reward else "FAIL",
+                        reward,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO steps VALUES (
+                        ?, 1, 'agent', 'shell_command', 'ran command',
+                        'true', NULL, 'bash', '{}'
+                    )
+                    """,
+                    (trajectory_id,),
+                )
+            save_attribution(
+                connection,
+                "trial-2",
+                {
+                    "attributable": True,
+                    "first_error_step": 1,
+                    "stage": "repair",
+                    "mechanism": "implementation_detail_defects",
+                    "subcategory": "control_flow",
+                    "summary": "Wrong branch",
+                    "evidence_step_ids": [1],
+                    "confidence": 0.8,
+                },
+            )
+            connection.commit()
+
+            csv_path = root / "labels.csv"
+            self.assertEqual(
+                export_annotation_template(connection, "repeat-exp", csv_path), 1
+            )
+            with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+                fieldnames = rows[0].keys()
+            rows[0].update(
+                {
+                    "human_step": "1",
+                    "human_stage": "repair",
+                    "human_mechanism": "implementation_detail_defects",
+                    "human_subcategory": "control_flow",
+                    "human_evidence_steps": "1",
+                    "evidence_pass": "yes",
+                    "notes": "checked",
+                    "oracle_used": "yes",
+                }
+            )
+            with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            self.assertEqual(import_annotations(connection, csv_path), 1)
+            result = report(connection, "repeat-exp", "test")
+            self.assertEqual(result["pass_at_3"], 1.0)
+            self.assertEqual(result["pass_all_repeats"], 0.0)
+            self.assertEqual(result["unstable_task_rate"], 1.0)
+            self.assertEqual(result["exact_step_accuracy"], 1.0)
             connection.close()
 
     def test_trusted_verifier_and_test_path_detection(self):

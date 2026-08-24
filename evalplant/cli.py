@@ -28,11 +28,13 @@ from .db import (
     claim_attribution_job,
     connect,
     enqueue_attribution,
+    export_annotation_template,
     failed_trajectories,
     finish_attribution_job,
     get_steps,
     get_trajectory,
     import_run,
+    import_annotations,
     save_annotation,
     save_attribution,
 )
@@ -58,6 +60,22 @@ def command_import(args: argparse.Namespace, connection: sqlite3.Connection) -> 
         "Imported [bold green]%s[/bold green] trajectory(s): %s"
         % (len(ids), ", ".join(ids))
     )
+
+
+def command_export_labels(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    count = export_annotation_template(connection, args.experiment, _path(args.output))
+    console.print(
+        "Exported [bold green]%s[/bold green] rows to %s" % (count, args.output)
+    )
+
+
+def command_import_labels(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    count = import_annotations(connection, _path(args.path))
+    console.print("Imported [bold green]%s[/bold green] human labels" % count)
 
 
 def command_inspect(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
@@ -243,6 +261,12 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
     table.add_row("Average reward", _percent(result["average_reward"]))
     table.add_row("Pass all repeats", _percent(result["pass_all_repeats"]))
     table.add_row("Pass@3", _percent(result["pass_at_3"]))
+    table.add_row(
+        "Valid trials / unique tasks",
+        "%s / %s" % (result["valid_trials"], result["unique_tasks"]),
+    )
+    table.add_row("Tasks with 3+ repeats", str(result["repeated_tasks"]))
+    table.add_row("Unstable repeated tasks", _percent(result["unstable_task_rate"]))
     table.add_row("Average steps", _number_text(result["average_steps"]))
     table.add_row("Average tool errors", _number_text(result["average_tool_errors"]))
     table.add_row(
@@ -415,6 +439,17 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--experiment", required=True)
     sub.add_argument("--agent-model")
     sub.set_defaults(handler=command_import)
+
+    sub = commands.add_parser(
+        "export-labels", help="Export failed trajectories for human review"
+    )
+    sub.add_argument("--experiment", required=True)
+    sub.add_argument("--output", required=True)
+    sub.set_defaults(handler=command_export_labels)
+
+    sub = commands.add_parser("import-labels", help="Import completed human labels")
+    sub.add_argument("path")
+    sub.set_defaults(handler=command_import_labels)
 
     sub = commands.add_parser("inspect", help="Show one normalized trajectory")
     sub.add_argument("trajectory")

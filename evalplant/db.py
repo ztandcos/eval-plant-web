@@ -1,3 +1,4 @@
+import csv
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -5,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .core import normalize_trajectory, read_json, sha256_file
+from .core import validate_taxonomy
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -566,3 +568,106 @@ def save_annotation(
         ),
     )
     connection.commit()
+
+
+ANNOTATION_COLUMNS = (
+    "trajectory_id",
+    "task_id",
+    "raw_path",
+    "verifier_log_path",
+    "judge_step",
+    "judge_stage",
+    "judge_mechanism",
+    "judge_subcategory",
+    "judge_summary",
+    "human_step",
+    "human_stage",
+    "human_mechanism",
+    "human_subcategory",
+    "human_evidence_steps",
+    "evidence_pass",
+    "notes",
+    "oracle_used",
+    "split",
+)
+
+
+def export_annotation_template(
+    connection: sqlite3.Connection, experiment_id: str, output_path: Path
+) -> int:
+    rows = connection.execute(
+        """
+        SELECT t.id trajectory_id, t.base_task_id task_id, t.raw_path,
+               t.final_log_path verifier_log_path,
+               a.first_error_step judge_step, a.stage judge_stage,
+               a.mechanism judge_mechanism, a.subcategory judge_subcategory,
+               a.summary judge_summary
+        FROM trajectories t
+        LEFT JOIN attributions a ON a.trajectory_id=t.id
+        WHERE t.experiment_id=? AND t.health_status='VALID'
+          AND t.verdict IN ('FAIL', 'TIMEOUT')
+        ORDER BY t.base_task_id, t.trial_name
+        """,
+        (experiment_id,),
+    ).fetchall()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=ANNOTATION_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            item = {name: "" for name in ANNOTATION_COLUMNS}
+            item.update(dict(row))
+            item["split"] = "test"
+            item["oracle_used"] = "no"
+            writer.writerow(item)
+    return len(rows)
+
+
+def import_annotations(connection: sqlite3.Connection, input_path: Path) -> int:
+    count = 0
+    with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for line_number, row in enumerate(csv.DictReader(handle), start=2):
+            trajectory_id = str(row.get("trajectory_id") or "").strip()
+            step_text = str(row.get("human_step") or "").strip()
+            stage = str(row.get("human_stage") or "").strip()
+            mechanism = str(row.get("human_mechanism") or "").strip()
+            subcategory = str(row.get("human_subcategory") or "").strip()
+            if not all((trajectory_id, step_text, stage, mechanism, subcategory)):
+                continue
+            try:
+                step = int(step_text)
+                evidence = [
+                    int(value.strip())
+                    for value in str(row.get("human_evidence_steps") or "").split(",")
+                    if value.strip()
+                ]
+            except ValueError as error:
+                raise ValueError("Invalid step on CSV line %s" % line_number) from error
+            valid_steps = {
+                item["step_index"] for item in get_steps(connection, trajectory_id)
+            }
+            if step not in valid_steps or any(
+                value not in valid_steps for value in evidence
+            ):
+                raise ValueError("Unknown evidence step on CSV line %s" % line_number)
+            validate_taxonomy(stage, mechanism, subcategory)
+            evidence_text = str(row.get("evidence_pass") or "").strip().lower()
+            if evidence_text not in ("", "yes", "no"):
+                raise ValueError(
+                    "evidence_pass must be yes or no on line %s" % line_number
+                )
+            save_annotation(
+                connection,
+                trajectory_id,
+                str(row.get("split") or "test").strip(),
+                step,
+                stage,
+                mechanism,
+                evidence,
+                None if not evidence_text else evidence_text == "yes",
+                str(row.get("notes") or ""),
+                str(row.get("oracle_used") or "no").strip().lower() == "yes",
+                subcategory,
+            )
+            count += 1
+    return count

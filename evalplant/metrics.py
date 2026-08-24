@@ -71,6 +71,7 @@ def report(
         SELECT base_task_id, verdict, reward FROM trajectories
         WHERE experiment_id=? AND COALESCE(health_status, 'VALID')='VALID'
           AND reward IS NOT NULL
+        ORDER BY base_task_id, started_at, trial_name
         """,
         (experiment_id,),
     ).fetchall()
@@ -135,6 +136,14 @@ def report(
         "pass_at_3": (
             sum(any(value == 1 for value in rewards[:3]) for rewards in repeated)
             / len(repeated)
+            if repeated
+            else None
+        ),
+        "valid_trials": len(outcome_rows),
+        "unique_tasks": len(grouped),
+        "repeated_tasks": len(repeated),
+        "unstable_task_rate": (
+            sum(min(rewards) != max(rewards) for rewards in repeated) / len(repeated)
             if repeated
             else None
         ),
