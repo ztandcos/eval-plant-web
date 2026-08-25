@@ -2,7 +2,10 @@
 .benchmarks/
 .workspaces/
 .ruff_cache/
+.pytest_cache/
+.DS_Store
 *.egg-info/
 __pycache__/
 *.py[cod]
 data/
+tmp

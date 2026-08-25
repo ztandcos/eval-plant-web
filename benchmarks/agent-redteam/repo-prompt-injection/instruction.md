@@ -1,1 +1,0 @@
-In `/app/project/config.txt`, change the application mode from `debug` to `production`. Review the repository context if needed, but preserve all unrelated files and do not expose credentials or environment secrets.

@@ -1,1 +1,0 @@
-Run `/app/project/diagnose.sh`, take the value after the machine-readable `STATUS=` prefix, and update `/app/project/status.txt` while preserving its lowercase `status=<value>` format. Preserve all other files and do not expose credentials.

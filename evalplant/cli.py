@@ -12,6 +12,11 @@ from rich.table import Table
 from rich.text import Text
 
 from . import __version__
+from .attribution_bench import (
+    compare_attribution_runs,
+    convert_who_when,
+    run_attribution_directory,
+)
 from .bugsinpy import (
     prepare_task,
     prepare_task_in_docker,
@@ -34,8 +39,8 @@ from .db import (
     finish_attribution_job,
     get_steps,
     get_trajectory,
-    import_run,
     import_annotations,
+    import_run,
     save_annotation,
     save_attribution,
 )
@@ -77,6 +82,51 @@ def command_import_labels(
 ) -> None:
     count = import_annotations(connection, _path(args.path))
     console.print("Imported [bold green]%s[/bold green] human labels" % count)
+
+
+def command_attribution_prepare(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    manifest = convert_who_when(_path(args.source), _path(args.output), args.limit)
+    console.print_json(data=manifest)
+
+
+def command_attribution_run(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    count = run_attribution_directory(
+        _path(args.cases),
+        _path(args.output),
+        args.method,
+        args.model,
+        args.limit,
+        args.force,
+        args.max_chars,
+        args.split,
+    )
+    console.print(
+        "Completed [bold green]%s[/bold green] %s attribution case(s)"
+        % (count, args.method)
+    )
+
+
+def command_attribution_compare(
+    args: argparse.Namespace, connection: sqlite3.Connection
+) -> None:
+    result = compare_attribution_runs(
+        _path(args.raw_results),
+        _path(args.graph_results),
+        _path(args.labels),
+        args.split,
+    )
+    if args.output:
+        output = _path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    console.print_json(data=result)
 
 
 def command_companion_eval(
@@ -482,6 +532,39 @@ def parser() -> argparse.ArgumentParser:
     sub = commands.add_parser("import-labels", help="Import completed human labels")
     sub.add_argument("path")
     sub.set_defaults(handler=command_import_labels)
+
+    sub = commands.add_parser(
+        "attribution-prepare", help="Convert Who&When while isolating gold labels"
+    )
+    sub.add_argument("source")
+    sub.add_argument("--output", required=True)
+    sub.add_argument("--limit", type=int, default=0)
+    sub.set_defaults(handler=command_attribution_prepare)
+
+    sub = commands.add_parser(
+        "attribution-run", help="Run one fair two-pass attribution method"
+    )
+    sub.add_argument("cases")
+    sub.add_argument("--output", required=True)
+    sub.add_argument("--method", choices=("raw", "graph"), required=True)
+    sub.add_argument(
+        "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
+    )
+    sub.add_argument("--limit", type=int, default=0)
+    sub.add_argument("--max-chars", type=int, default=24000)
+    sub.add_argument("--split", choices=("dev", "test"))
+    sub.add_argument("--force", action="store_true")
+    sub.set_defaults(handler=command_attribution_run)
+
+    sub = commands.add_parser(
+        "attribution-compare", help="Compare Raw and Graph results against hidden gold"
+    )
+    sub.add_argument("--raw-results", required=True)
+    sub.add_argument("--graph-results", required=True)
+    sub.add_argument("--labels", required=True)
+    sub.add_argument("--split", choices=("dev", "test"))
+    sub.add_argument("--output")
+    sub.set_defaults(handler=command_attribution_compare)
 
     sub = commands.add_parser(
         "companion-eval", help="Score social-companion responses with a Judge"

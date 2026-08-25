@@ -6,18 +6,28 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from evalplant.attribution_bench import (
+    CANDIDATE_CALL_CONFIG,
+    VERIFY_CALL_CONFIG,
+    _validate_final,
+    build_attribution_graph,
+    compare_attribution_runs,
+    convert_who_when,
+    run_attribution_case,
+    run_attribution_directory,
+)
 from evalplant.bugsinpy import (
     _docker_agent_command,
     _docker_prepare_command,
     _is_test_path,
     _validate,
 )
-from evalplant.core import classify_step, normalize_trajectory, signal_bundle
 from evalplant.companion import (
     evaluate_companion,
     export_companion_labels,
     generate_companion,
 )
+from evalplant.core import classify_step, normalize_trajectory, signal_bundle
 from evalplant.db import (
     connect,
     export_annotation_template,
@@ -26,12 +36,307 @@ from evalplant.db import (
     save_annotation,
     save_attribution,
 )
+from evalplant.judge import analyze_trajectory
 from evalplant.metrics import compare_experiments, report
 from evalplant.online import ingest_payload
-from evalplant.judge import analyze_trajectory
 
 
 class PipelineTest(unittest.TestCase):
+    def test_who_when_conversion_keeps_gold_out_of_judge_case(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "Who&When" / "Algorithm-Generated"
+            source.mkdir(parents=True)
+            (source / "1.json").write_text(
+                json.dumps(
+                    {
+                        "question": "Count the valid rows",
+                        "system_prompt": "Work together",
+                        "history": [
+                            {
+                                "role": "assistant",
+                                "name": "Excel_Expert",
+                                "content": (
+                                    "I computed 42 valid rows.\n"
+                                    + "context " * 400
+                                    + "\n```python\nfor result in None:\n    pass\n```"
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "name": "Verifier",
+                                "content": "I used 42 as the final count.",
+                            },
+                            {
+                                "role": "user",
+                                "name": "Computer_terminal",
+                                "content": "exitcode: 0",
+                            },
+                        ],
+                        "mistake_step": "0",
+                        "mistake_agent": "Excel_Expert",
+                        "mistake_reason": "The row filter was incomplete",
+                        "ground_truth": "8",
+                        "is_correct": False,
+                        "question_ID": "q-1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = convert_who_when(root / "Who&When", root / "converted")
+            case_path = next((root / "converted" / "cases").glob("*.json"))
+            label_path = next((root / "converted" / "labels").glob("*.json"))
+            case = json.loads(case_path.read_text(encoding="utf-8"))
+            label = json.loads(label_path.read_text(encoding="utf-8"))
+            graph = build_attribution_graph(case)
+
+            self.assertEqual(manifest["converted"], 1)
+            self.assertNotIn("ground_truth", case)
+            self.assertNotIn("mistake_reason", case)
+            self.assertEqual(label["first_error_step"], 1)
+            self.assertEqual(case["steps"][0]["actor"], "agent")
+            self.assertEqual(case["steps"][2]["source"], "tool")
+            self.assertTrue(
+                any(edge["relation"] == "DATA_DEPENDENCY" for edge in graph["edges"])
+            )
+            self.assertIn("for result in None", graph["nodes"][1]["content"][:250])
+            self.assertEqual(graph["nodes"][3]["type"], "ToolResult")
+            self.assertTrue(all(node.get("source_ref") for node in graph["nodes"]))
+            empty = root / "empty"
+            empty.mkdir()
+            with self.assertRaises(ValueError):
+                convert_who_when(empty, root / "converted")
+            self.assertTrue(case_path.exists())
+
+    def test_two_pass_raw_and_graph_are_scored_with_the_same_budget(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.mkdir()
+            (source / "1.json").write_text(
+                json.dumps(
+                    {
+                        "question": "Count the valid rows",
+                        "history": [
+                            {
+                                "role": "assistant",
+                                "name": "Excel_Expert",
+                                "content": "I computed 4 valid rows.",
+                            },
+                            {
+                                "role": "user",
+                                "name": "Verifier",
+                                "content": "I used 4 as the final count.",
+                            },
+                        ],
+                        "mistake_step": "0",
+                        "mistake_agent": "Excel_Expert",
+                        "mistake_reason": "The row filter was incomplete",
+                        "ground_truth": "8",
+                        "is_correct": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            convert_who_when(source, root / "converted")
+            case_path = next((root / "converted" / "cases").glob("*.json"))
+            label_path = next((root / "converted" / "labels").glob("*.json"))
+            candidate = {"candidates": [{"step_id": 1, "hypothesis": "wrong count"}]}
+            final = {
+                "attributable": True,
+                "first_error_step": 1,
+                "responsibility_domain": "agent_model",
+                "failure_mode": "information_or_reasoning",
+                "summary": "The wrong count was reused.",
+                "supporting_evidence": [
+                    {"step_id": 1, "quote": "I computed 4 valid rows."}
+                ],
+                "counter_evidence": [],
+                "candidate_reviews": [
+                    {
+                        "step_id": 1,
+                        "classification": "pivotal_root_cause",
+                        "decision": "accept",
+                        "supporting_evidence": [
+                            {"step_id": 1, "quote": "I computed 4 valid rows."}
+                        ],
+                        "counter_evidence": [],
+                        "reason": "The wrong count propagated.",
+                    }
+                ],
+                "causal_links": [
+                    {"from_step": 1, "to_step": 2, "relation": "reused"},
+                    {"from_step": 2, "to_step": "outcome", "relation": "caused"},
+                ],
+                "confidence": 0.9,
+            }
+
+            def response(value):
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content=json.dumps(value))
+                        )
+                    ],
+                    usage=SimpleNamespace(
+                        prompt_tokens=10, completion_tokens=5, total_tokens=15
+                    ),
+                )
+
+            create = Mock(
+                side_effect=[
+                    response(candidate),
+                    response(final),
+                    response(candidate),
+                    response(final),
+                ]
+            )
+            client = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+            )
+            raw = run_attribution_case(case_path, "raw", "judge", client, 12000)
+            graph = run_attribution_case(case_path, "graph", "judge", client, 12000)
+
+            raw_dir = root / "results" / "raw"
+            graph_dir = root / "results" / "graph"
+            labels_dir = root / "labels"
+            raw_dir.mkdir(parents=True)
+            graph_dir.mkdir(parents=True)
+            labels_dir.mkdir()
+            (raw_dir / case_path.name).write_text(json.dumps(raw), encoding="utf-8")
+            (graph_dir / case_path.name).write_text(json.dumps(graph), encoding="utf-8")
+            (labels_dir / case_path.name).write_text(
+                label_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            report = compare_attribution_runs(raw_dir, graph_dir, labels_dir)
+
+            self.assertEqual(create.call_count, 4)
+            self.assertEqual(raw["usage"]["calls"], 2)
+            self.assertEqual(graph["usage"]["calls"], 2)
+            self.assertEqual(raw["max_chars"], graph["max_chars"])
+            self.assertEqual(raw["prompt_version"], "two_pass_v2")
+            self.assertEqual(
+                raw["judge_config"]["candidate"]["thinking"]["type"], "disabled"
+            )
+            self.assertEqual(
+                raw["judge_config"]["verify"]["thinking"]["type"], "enabled"
+            )
+            self.assertEqual(raw["judge_config"]["verify"]["reasoning_effort"], "high")
+            self.assertEqual(raw["judge_config"]["candidate"]["max_tokens"], 1024)
+            self.assertEqual(raw["judge_config"]["verify"]["max_tokens"], 16384)
+            for index, config in enumerate(
+                (CANDIDATE_CALL_CONFIG, VERIFY_CALL_CONFIG) * 2
+            ):
+                kwargs = create.call_args_list[index].kwargs
+                self.assertEqual(kwargs["max_tokens"], config["max_tokens"])
+                self.assertEqual(kwargs["extra_body"]["thinking"], config["thinking"])
+                self.assertEqual(
+                    kwargs.get("reasoning_effort"), config.get("reasoning_effort")
+                )
+            self.assertEqual(report["raw"]["exact_step_accuracy"], 1.0)
+            self.assertIsNone(report["graph"]["responsible_actor_accuracy"])
+            self.assertEqual(report["comparison"]["exact_step_accuracy_delta"], 0.0)
+            self.assertEqual(report["comparison"]["input_token_reduction_rate"], 0.0)
+            rejected = {
+                **final,
+                "candidate_reviews": [
+                    {
+                        "step_id": 1,
+                        "classification": "failure_symptom",
+                        "decision": "reject",
+                        "supporting_evidence": [],
+                        "counter_evidence": [
+                            {"step_id": 2, "quote": "I used 4 as the final count."}
+                        ],
+                        "reason": "This only reports the earlier wrong count.",
+                    }
+                ],
+            }
+            steps = normalize_trajectory(
+                json.loads(case_path.read_text(encoding="utf-8"))
+            )
+            with self.assertRaisesRegex(ValueError, "rejected candidate"):
+                _validate_final(rejected, steps, candidate["candidates"])
+            later = {
+                **final,
+                "first_error_step": 2,
+                "candidate_reviews": [
+                    final["candidate_reviews"][0],
+                    {
+                        **final["candidate_reviews"][0],
+                        "step_id": 2,
+                        "supporting_evidence": [
+                            {"step_id": 2, "quote": "I used 4 as the final count."}
+                        ],
+                    },
+                ],
+            }
+            with self.assertRaisesRegex(ValueError, "earliest accepted candidate"):
+                _validate_final(
+                    later,
+                    steps,
+                    candidate["candidates"] + [{"step_id": 2}],
+                )
+            paraphrased = json.loads(json.dumps(final))
+            paraphrased["candidate_reviews"][0]["supporting_evidence"][0]["quote"] = (
+                "I computed roughly four rows."
+            )
+            self.assertFalse(
+                _validate_final(paraphrased, steps, candidate["candidates"])[
+                    "evidence_valid"
+                ]
+            )
+            checkpoint_path = root / "checkpoint.json"
+            interrupted_create = Mock(
+                side_effect=[response(candidate), RuntimeError("temporary outage")]
+            )
+            interrupted_client = SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(create=interrupted_create)
+                )
+            )
+            with self.assertRaisesRegex(RuntimeError, "temporary outage"):
+                run_attribution_case(
+                    case_path,
+                    "raw",
+                    "judge",
+                    interrupted_client,
+                    12000,
+                    checkpoint_path,
+                )
+            resumed_create = Mock(return_value=response(final))
+            resumed_client = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=resumed_create))
+            )
+            resumed = run_attribution_case(
+                case_path,
+                "raw",
+                "judge",
+                resumed_client,
+                12000,
+                checkpoint_path,
+            )
+            self.assertEqual(resumed_create.call_count, 1)
+            self.assertEqual(resumed["attribution"]["first_error_step"], 1)
+            mismatched = {**graph, "prompt_version": "two_pass_v1"}
+            (graph_dir / case_path.name).write_text(
+                json.dumps(mismatched), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "same Judge configuration"):
+                compare_attribution_runs(raw_dir, graph_dir, labels_dir)
+            (raw_dir / case_path.name).write_text(
+                json.dumps({**raw, "prompt_version": "two_pass_v1"}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "different Judge prompts"):
+                run_attribution_directory(
+                    case_path.parent, root / "results", "raw", "judge"
+                )
+            (graph_dir / case_path.name).unlink()
+            with self.assertRaises(ValueError):
+                compare_attribution_runs(raw_dir, graph_dir, labels_dir)
+
     def test_companion_judge_scores_and_hard_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
