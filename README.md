@@ -14,6 +14,17 @@ Harbor + DeepSeek Harness Minimal（rc6 / rc7）
                     人工校准、对比统计、报告
 ```
 
+项目现在使用一个顶层工作区：`harbor/` 是任务执行引擎，负责容器、Agent 和 Verifier；`evalplant/` 是分析引擎，负责导入轨迹、失败归因和统计。两者都位于 `/Users/shaw/eval-plant`，不再依赖外部 workspace 路径。
+
+```text
+/Users/shaw/eval-plant
+├── harbor/       # 运行 Terminal-Bench 和 DeepSeek Harness
+├── evalplant/    # 轨迹分析与归因代码
+├── data/         # Who&When 与 Terminal-Bench 结果
+├── prompts/      # Judge 提示词
+└── tests/        # EvalPlant 测试
+```
+
 这个仓库不做插件生成、自动改 Prompt、强化学习或失败后的自我进化。它只把“跑得是否正常、任务是否成功、失败在哪里、不同版本差多少”做扎实。
 
 ## 关键边界
@@ -43,10 +54,10 @@ export DEEPSEEK_API_KEY="你的 Key"
 
 ## 一次真实离线运行
 
-Harbor 适配器位于独立工作区 `/Users/shaw/workspace/harbor-dsh-evalplant`。下面的 smoke job 会运行一个真实容器，安装 rc7，调用 `deepseek-v4-flash` 创建文件，再由 Verifier 判分：
+Harbor 适配器位于项目内的 `/Users/shaw/eval-plant/harbor`。下面的 smoke job 会运行一个真实容器，安装 rc7，调用 `deepseek-v4-flash` 创建文件，再由 Verifier 判分：
 
 ```bash
-cd /Users/shaw/workspace/harbor-dsh-evalplant
+cd /Users/shaw/eval-plant/harbor
 uv run harbor run \
   -c examples/configs/agents/dsh-minimal-job.yaml \
   --job-name evalplant-dsh-rc7-smoke \
@@ -58,7 +69,7 @@ uv run harbor run \
 ```bash
 cd /Users/shaw/eval-plant
 uv run evalplant --db data/evalplant-harbor.db import \
-  /Users/shaw/workspace/harbor-dsh-evalplant/jobs/evalplant-dsh-rc7-smoke \
+  /Users/shaw/eval-plant/harbor/jobs/evalplant-dsh-rc7-smoke \
   --experiment rc7-smoke \
   --agent-model deepseek-v4-flash
 
