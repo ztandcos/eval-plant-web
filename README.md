@@ -1,5 +1,7 @@
 # EvalPlant
 
+项目的完整背景、当前状态、实验结果和逐步工作记录统一维护在 [`PROJECT_LOG.md`](PROJECT_LOG.md)。开始新工作前先阅读该文件，完成实际步骤后同步更新正文与文末日志。
+
 EvalPlant 是一套面向 Coding Agent 的评测基础设施。Harbor 负责把任务放进隔离容器、运行 DeepSeek Harness、执行 Verifier；EvalPlant 负责保存和索引轨迹、区分运行故障与模型失败、提取客观证据、做失败归因和统计。
 
 ```text
