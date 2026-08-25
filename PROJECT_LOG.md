@@ -263,6 +263,7 @@ uv run python -m unittest tests.test_pipeline tests.test_universal_attribution
 当前工作树干净，所有项目改动已经提交：
 
 ```text
+099d0ed Add canonical project work log
 6eabb76 Move Harbor workspace under project root
 1272049 Add attribution benchmark and remove unused benches
 ```
@@ -315,6 +316,16 @@ README 中仍有旧 `two_pass_v2` 和 Top-3 描述，已经落后于最新讨论
 验证：移动后 `uv run harbor --help` 成功，启动脚本已使用新路径 `/Users/shaw/eval-plant/harbor/.venv/bin/python3`；EvalPlant 主仓库和 Harbor 内部仓库均为干净状态。提交为 `6eabb76 Move Harbor workspace under project root`。
 
 唯一下一步：按照第 12 节实现简化候选输出，先用本地 `deepseek-r1:14b` 对样本 103 做一次低输出上限冒烟测试，不调用云端模型。
+
+### 2026-08-25：建立项目根目录唯一工作记录
+
+目标：把一次性迁移说明变成后续 Agent 持续维护的项目记录，消除桌面和项目内两份文档可能产生的分叉。
+
+实际完成：桌面 `EvalPlant项目迁移说明.md` 已移动为项目根目录 `PROJECT_LOG.md`；文档增加维护规则、历史步骤和统一日志模板；README 增加入口说明。桌面不再保留或维护副本。
+
+验证：根目录文档存在，桌面旧文件不存在，文档未包含 API Key，主仓库提交后保持干净。初始提交为 `099d0ed Add canonical project work log`。
+
+唯一下一步：后续任何实际改动都先更新正文当前状态，再在本节末尾追加日期记录。
 
 ### 后续记录模板
 
