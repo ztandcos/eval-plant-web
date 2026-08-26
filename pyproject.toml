@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evalplant"
-version = "0.2.0"
-description = "Harbor trajectory evaluation and failure attribution for coding agents"
+version = "0.3.0"
+description = "Harbor trajectory diagnosis and statistics for coding agents"
 requires-python = ">=3.9"
 dependencies = [
   "openai>=1.0",
@@ -18,3 +18,6 @@ evalplant = "evalplant.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["evalplant*"]
+
+[tool.setuptools.package-data]
+evalplant = ["diagnosis_prompt.txt"]

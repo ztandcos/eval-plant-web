@@ -1,0 +1,30 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "session_id": "demo-session",
+  "agent": {
+    "name": "dsh-minimal",
+    "version": "demo",
+    "model_name": "demo-model"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "source": "user",
+      "message": "Create the service configuration and verify it."
+    },
+    {
+      "step_id": 2,
+      "source": "agent",
+      "message": "I will write the configuration.",
+      "tool_calls": [
+        {
+          "tool_call_id": "demo-call-1",
+          "function_name": "bash",
+          "arguments": {
+            "command": "printf 'port=5328' > /app/service.conf"
+          }
+        }
+      ]
+    }
+  ]
+}

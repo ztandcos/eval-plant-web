@@ -4,63 +4,27 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-TAXONOMY = {
-    "localization": {
-        "issue_misleading": ("issue_misleading",),
-        "superficial_information_matching": (
-            "description_keywords",
-            "referred_code",
-            "error_stack_trace",
-        ),
-    },
-    "repair": {
-        "fix_strategy_defects": (
-            "specific_case_overfitting",
-            "evasive_repair",
-            "redundant_erroneous_implementation",
-        ),
-        "implementation_detail_defects": (
-            "algorithmic_implementation",
-            "control_flow",
-            "boundary_handling",
-            "data_processing_errors",
-            "insufficient_domain_knowledge",
-        ),
-        "incomplete_repair": (
-            "inheritance_dependency",
-            "interface_contract_dependency",
-            "logic_coordination_dependency",
-            "recurring_pattern_dependency",
-            "issue_interference",
-        ),
-    },
-    "iterative_verification": {
-        "reproduction_or_verification_failure": (
-            "reproduction_validation_run_failure",
-            "insufficient_verification_capability",
-            "reproduction_output_misreading",
-        ),
-        "iteration_anomalies": (
-            "non_progressive_iteration",
-            "blind_strategy_switching",
-        ),
-        "validation_retreat": ("verification_abandonment", "verification_weakening"),
-        "context_amnesia": ("context_amnesia",),
-    },
+HARNESS_LAYERS = {
+    "H-E": "执行环境",
+    "H-T": "工具链路",
+    "H-C": "上下文管理",
+    "H-L": "运行生命周期",
+    "H-O": "可观测性",
+    "H-V": "验证与判分",
+    "H-G": "治理与限制",
 }
 
-PHASES = tuple(TAXONOMY)
-CATEGORIES = tuple(category for groups in TAXONOMY.values() for category in groups)
-SUBCATEGORIES = tuple(
-    subcategory
-    for groups in TAXONOMY.values()
-    for subcategories in groups.values()
-    for subcategory in subcategories
-)
-# Compatibility names for the existing CLI and database columns.
-STAGES = PHASES
-MECHANISMS = CATEGORIES
-VERDICTS = ("PASS", "FAIL", "TIMEOUT", "INFRA_ERROR", "UNKNOWN")
+LLM_CATEGORIES = {
+    "L1": "目标理解与规划",
+    "L2": "推理与决策",
+    "L3": "行动与工具使用",
+    "L4": "反馈、验证与结束",
+}
+
+DIAGNOSIS_STATUSES = ("ATTRIBUTED", "UNDETERMINED", "INPUT_TOO_LARGE", "FAILED")
+RESPONSIBILITIES = ("HARNESS", "LLM")
+CONFIDENCE_LEVELS = ("HIGH", "MEDIUM", "LOW")
+VERDICTS = ("PASS", "FAIL", "TIMEOUT", "INFRA_ERROR", "UNKNOWN", "INCOMPLETE")
 
 
 def sha256_file(path: Path) -> str:
@@ -248,7 +212,10 @@ def normalize_trajectory(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return steps
 
 
-def summarize_step(step: Dict[str, Any], limit: int = 12000) -> Dict[str, Any]:
+def summarize_step(
+    step: Dict[str, Any], limit: Optional[int] = 12000
+) -> Dict[str, Any]:
+    content = str(step.get("content") or "")
     return {
         "step": step["step_index"],
         "role": step.get("role"),
@@ -256,7 +223,7 @@ def summarize_step(step: Dict[str, Any], limit: int = 12000) -> Dict[str, Any]:
         "tool": step.get("tool_name"),
         "arguments": step.get("tool_arguments"),
         "test_status": step.get("test_status"),
-        "content": str(step.get("content") or "")[:limit],
+        "content": content if limit is None else content[:limit],
     }
 
 
@@ -307,17 +274,15 @@ def signal_bundle(steps: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def validate_taxonomy(phase: str, category: str, subcategory: str) -> None:
-    if phase not in TAXONOMY:
-        raise ValueError("Invalid phase: %s" % phase)
-    if category not in TAXONOMY[phase]:
-        raise ValueError("Invalid category for %s: %s" % (phase, category))
-    if subcategory not in TAXONOMY[phase][category]:
-        raise ValueError("Invalid subcategory for %s: %s" % (category, subcategory))
+def estimate_tokens(value: Any) -> int:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    # Conservative without tying the platform to one model-specific tokenizer.
+    return max(1, (len(text) + 1) // 2)
 
 
-def validate_stage_mechanism(stage: str, mechanism: str) -> None:
-    if stage not in PHASES:
-        raise ValueError("Invalid phase: %s" % stage)
-    if mechanism not in TAXONOMY[stage]:
-        raise ValueError("Invalid category for %s: %s" % (stage, mechanism))
+def validate_category(responsibility: str, category_code: str) -> str:
+    if responsibility == "HARNESS" and category_code in HARNESS_LAYERS:
+        return HARNESS_LAYERS[category_code]
+    if responsibility == "LLM" and category_code in LLM_CATEGORIES:
+        return LLM_CATEGORIES[category_code]
+    raise ValueError("Invalid %s category: %s" % (responsibility, category_code))
