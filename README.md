@@ -2,7 +2,7 @@
 
 EvalPlant 是一个只做离线诊断和统计的 Agent 评测后台。Harbor 与 DeepSeek Harness 负责在容器中运行任务并产出 ATIF 轨迹，EvalPlant 负责导入这些结果、判断失败属于 Harness 还是 LLM、保存证据并汇总统计。
 
-当前不做归因算法对比、人工金标打分、在线反馈、自动修复、插件生成或自动重跑。Who&When 的公开轨迹和人工标注只作为保留资料，不进入诊断链路。
+当前不做归因算法对比、人工金标打分、在线反馈、自动修复、插件生成或自动重跑。
 
 ```text
 Harbor + DeepSeek Harness 运行任务
@@ -31,7 +31,6 @@ ATIF 轨迹 + result.json + Verifier 日志
 ├── examples/demo-job/         # 不需要 API Key 的可复现演示
 ├── integrations/              # 可移植的 Harbor + DSH 补丁
 ├── data/evalplant.db          # 唯一工作数据库
-├── data/who-when/             # 仅保留的数据集和人工标注
 ├── tests/                     # 不调用付费 API 的自动测试
 ├── SQLITE_DATA_DICTIONARY.md  # SQLite 每个字段的大白话说明
 ├── DELIVERY.md                # 实习项目交付说明与验收边界

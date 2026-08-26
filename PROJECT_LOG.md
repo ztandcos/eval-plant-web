@@ -31,8 +31,6 @@ Harbor / DeepSeek Harness → ATIF → import → analyze → inspect / report
 
 唯一工作库为 `data/evalplant.db`，只有 `experiments`、`trajectories`、`steps`、`diagnoses` 四张表。迁移后保留 2 个 Terminal-Bench 实验、12 条真实轨迹、285 个步骤，旧归因结果已清空。每个字段见 `SQLITE_DATA_DICTIONARY.md`。
 
-Who&When 的 184 条公开轨迹、184 份人工标注和 manifest 继续保留，但不参与当前链路。
-
 ## 2026-08-26：工程诊断机制落地
 
 完成新的 Harness-first 诊断链路、一次 Judge 协议、输出上限、证据校验、统计和四命令 CLI。真实轨迹规则体检发现模型文本中的 `truncated` 会造成误判，因此删除了自然语言关键词判断，只保留结构化截断标志或明确基础设施异常。
@@ -62,8 +60,12 @@ Harbor 仍作为本地独立工作副本，避免把 1.7GB 上游仓库提交进
 
 最终包构建时发现根目录 Prompt 不会自动进入 wheel，因此将 Prompt 移到 `evalplant/diagnosis_prompt.txt` 并声明为 package data。重新构建并在仓库外的隔离虚拟环境安装后，0.3.0 wheel 可以正确读取 Prompt。早期遗留的 `data/external/Agents_Failure_Attribution`、构建缓存和临时包均已移动到废纸篓 `/Users/shaw/.Trash/evalplant-delivery-cleanup-20260826/`，可恢复。
 
+## 2026-08-26：清理 Who&When 旧资料
+
+删除不再参与当前诊断链路的 `data/who-when`，共 369 个文件、约 7.7 MB，并同步更新 README 和交付说明。原目录已移动到 macOS 废纸篓 `/Users/shaw/.Trash/evalplant-who-when-20260826/`，需要时仍可恢复。
+
 ## 早期方向变更记录
 
-项目早期曾比较 Raw、Graph、G-RAV 和 DeepDebug，并用 Who&When 金标计算定位准确率。少量样本中算法结果波动大、成本不可控，而且偏离工程平台目标，因此停止这条路线。保留数据和标注只是为了以后确有需要时可以复查，不再维护对应实验代码。
+项目早期曾比较 Raw、Graph、G-RAV 和 DeepDebug，并用 Who&When 金标计算定位准确率。少量样本中算法结果波动大、成本不可控，而且偏离工程平台目标，因此停止这条路线；对应实验代码、数据和标注均已从项目清除。
 
 后续每完成一个实际变更，都继续追加到本文件；桌面旧文档不再维护。

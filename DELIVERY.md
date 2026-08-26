@@ -88,7 +88,7 @@ uv run pytest tests/unit/agents/installed/test_dsh_minimal.py -q
 
 当前交付只做离线诊断和统计，不包括 Web 控制台、在线用户反馈、插件生成、自动修复、自动重跑和归因算法竞赛。这些能力并不是忘记实现，而是为了让实习项目形成一条真正可验收的主线而主动删去。
 
-Who&When 轨迹和人工标注作为早期研究资料保留在本机数据目录，不进入当前运行链路。Raw、Graph、G-RAV 和 DeepDebug 的比较代码已删除；早期实验说明单次 Judge 结果存在波动，也推动项目从“发明定位算法”转向“建立可审计诊断机制”。
+Raw、Graph、G-RAV 和 DeepDebug 的比较代码及 Who&When 旧资料已删除；早期实验说明单次 Judge 结果存在波动，也推动项目从“发明定位算法”转向“建立可审计诊断机制”。
 
 ## 已知限制与下一阶段
 
