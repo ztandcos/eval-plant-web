@@ -5,7 +5,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .core import normalize_trajectory, read_json, sha256_file
+from .core import (
+    ADAPTER_VERSION,
+    CANONICAL_SCHEMA_VERSION,
+    normalize_trajectory,
+    read_json,
+    sanitize_value,
+    sha256_file,
+    validate_trajectory_schema,
+)
+
+DATABASE_SCHEMA_VERSION = 4
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -45,6 +55,9 @@ CREATE TABLE IF NOT EXISTS trajectories (
     agent_setup_seconds REAL,
     agent_execution_seconds REAL,
     verifier_seconds REAL,
+    source_schema_version TEXT,
+    canonical_schema_version TEXT,
+    adapter_version TEXT,
     UNIQUE(experiment_id, task_id)
 );
 
@@ -82,8 +95,35 @@ CREATE TABLE IF NOT EXISTS diagnoses (
     judge_max_input_tokens INTEGER,
     judge_max_output_tokens INTEGER,
     diagnosis_error TEXT,
+    rule_version TEXT,
+    diagnosis_config_hash TEXT,
+    judge_temperature REAL,
+    judge_call_count INTEGER NOT NULL DEFAULT 0,
+    trajectory_mode TEXT,
+    evidence_validation_level TEXT,
     report_json TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attempts (
+    id TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES experiments(id),
+    job_id TEXT NOT NULL,
+    trial_id TEXT NOT NULL,
+    trial_name TEXT NOT NULL,
+    task_name TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    retryable INTEGER NOT NULL DEFAULT 0,
+    exception_type TEXT,
+    exception_message TEXT,
+    started_at TEXT,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(experiment_id, trial_id),
+    UNIQUE(experiment_id, trial_name, attempt_number)
 );
 """
 
@@ -105,12 +145,21 @@ TRAJECTORY_MIGRATIONS = {
     "agent_setup_seconds": "REAL",
     "agent_execution_seconds": "REAL",
     "verifier_seconds": "REAL",
+    "source_schema_version": "TEXT",
+    "canonical_schema_version": "TEXT",
+    "adapter_version": "TEXT",
 }
 
 DIAGNOSIS_MIGRATIONS = {
     "judge_thinking": "TEXT",
     "judge_max_input_tokens": "INTEGER",
     "judge_max_output_tokens": "INTEGER",
+    "rule_version": "TEXT",
+    "diagnosis_config_hash": "TEXT",
+    "judge_temperature": "REAL",
+    "judge_call_count": "INTEGER NOT NULL DEFAULT 0",
+    "trajectory_mode": "TEXT",
+    "evidence_validation_level": "TEXT",
 }
 
 
@@ -159,6 +208,7 @@ def connect(path: Path) -> sqlite3.Connection:
         WHERE reward IS NULL AND verdict IN ('PASS', 'FAIL')
         """
     )
+    connection.execute("PRAGMA user_version = %s" % DATABASE_SCHEMA_VERSION)
     connection.commit()
     return connection
 
@@ -185,7 +235,188 @@ def _trajectory_paths(path: Path) -> List[Path]:
         return [path]
     paths = set(path.rglob("*.traj.json"))
     paths.update(path.rglob("trajectory.json"))
-    return sorted(paths)
+    return sorted(item for item in paths if "_retries" not in item.parts)
+
+
+def sync_execution_events(
+    connection: sqlite3.Connection, job_path: Path, experiment_id: str
+) -> int:
+    """Idempotently import Harbor's append-only lifecycle event stream."""
+    ensure_experiment(connection, experiment_id)
+    event_path = job_path / "execution-events.jsonl"
+    if not event_path.exists():
+        return 0
+    events = []
+    content = event_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            if line_number == len(lines) and not content.endswith("\n"):
+                break
+            raise ValueError(
+                "Invalid Harbor execution event at line %s: %s" % (line_number, error)
+            ) from error
+        if event.get("event_version") != 1:
+            raise ValueError(
+                "Unsupported Harbor execution event version at line %s: %r"
+                % (line_number, event.get("event_version"))
+            )
+        required = {
+            "job_id",
+            "trial_id",
+            "trial_name",
+            "task_name",
+            "event",
+            "state",
+            "timestamp",
+        }
+        missing = sorted(required - event.keys())
+        if missing:
+            raise ValueError(
+                "Harbor execution event at line %s is missing: %s"
+                % (line_number, ", ".join(missing))
+            )
+        if event["event"] not in {
+            "start",
+            "environment-start",
+            "agent-start",
+            "agent-end",
+            "verification-start",
+            "heartbeat",
+            "end",
+            "cancel",
+        }:
+            raise ValueError("Unknown Harbor execution event: %s" % event["event"])
+        if event["state"] not in {
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "TIMEOUT",
+            "INFRA_ERROR",
+        }:
+            raise ValueError("Unknown Harbor execution state: %s" % event["state"])
+        try:
+            datetime.fromisoformat(str(event["timestamp"]).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError(
+                "Invalid Harbor event timestamp at line %s" % line_number
+            ) from error
+        events.append(event)
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+    attempt_numbers: Dict[str, Dict[str, int]] = {}
+    for event in events:
+        trial_id = str(event["trial_id"])
+        trial_name = str(event["trial_name"])
+        attempts_for_trial = attempt_numbers.setdefault(trial_name, {})
+        attempts_for_trial.setdefault(trial_id, len(attempts_for_trial) + 1)
+        item = grouped.setdefault(
+            trial_id,
+            {
+                "job_id": str(event["job_id"]),
+                "trial_name": trial_name,
+                "task_name": str(event["task_name"]),
+                "attempt_number": attempts_for_trial[trial_id],
+                "started_at": None,
+                "event_count": 0,
+            },
+        )
+        timestamp = str(event["timestamp"])
+        item.update(
+            state=str(event["state"]),
+            phase=str(event["event"]),
+            retryable=bool(event.get("retryable")),
+            exception_type=event.get("exception_type"),
+            exception_message=sanitize_value(event.get("exception_message")),
+            updated_at=timestamp,
+        )
+        item["event_count"] += 1
+        if event["event"] == "start" and item["started_at"] is None:
+            item["started_at"] = timestamp
+        item["finished_at"] = timestamp if event["event"] in {"end", "cancel"} else None
+
+    for trial_id, item in grouped.items():
+        attempt_id = hashlib.sha256(
+            (experiment_id + "\0" + trial_id).encode("utf-8")
+        ).hexdigest()[:32]
+        connection.execute(
+            """
+            INSERT INTO attempts (
+                id, experiment_id, job_id, trial_id, trial_name, task_name,
+                attempt_number, state, phase, retryable, exception_type,
+                exception_message, started_at, updated_at, finished_at, event_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(experiment_id, trial_id) DO UPDATE SET
+                state=excluded.state, phase=excluded.phase,
+                retryable=excluded.retryable,
+                exception_type=excluded.exception_type,
+                exception_message=excluded.exception_message,
+                started_at=excluded.started_at, updated_at=excluded.updated_at,
+                finished_at=excluded.finished_at, event_count=excluded.event_count
+            """,
+            (
+                attempt_id,
+                experiment_id,
+                item["job_id"],
+                trial_id,
+                item["trial_name"],
+                item["task_name"],
+                item["attempt_number"],
+                item["state"],
+                item["phase"],
+                int(item["retryable"]),
+                item["exception_type"],
+                item["exception_message"],
+                item["started_at"],
+                item["updated_at"],
+                item["finished_at"],
+                item["event_count"],
+            ),
+        )
+    connection.commit()
+    return len(grouped)
+
+
+def execution_status(
+    connection: sqlite3.Connection,
+    experiment_id: str,
+    lost_after_seconds: int = 90,
+) -> Dict[str, Any]:
+    rows = connection.execute(
+        """
+        SELECT * FROM attempts WHERE experiment_id=?
+        ORDER BY trial_name, attempt_number
+        """,
+        (experiment_id,),
+    ).fetchall()
+    now = datetime.now(timezone.utc)
+    attempts = []
+    for row in rows:
+        item = dict(row)
+        if item["state"] == "RUNNING":
+            updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
+            if (now - updated).total_seconds() > lost_after_seconds:
+                item["state"] = "LOST"
+        attempts.append(item)
+    latest = {}
+    for item in attempts:
+        latest[item["trial_name"]] = item
+    states: Dict[str, int] = {}
+    for item in latest.values():
+        states[item["state"]] = states.get(item["state"], 0) + 1
+    return {
+        "experiment": experiment_id,
+        "logical_trials": len(latest),
+        "total_attempts": len(attempts),
+        "retries": max(0, len(attempts) - len(latest)),
+        "states": states,
+        "attempts": attempts,
+    }
 
 
 def _number(value: Any) -> Optional[float]:
@@ -193,11 +424,17 @@ def _number(value: Any) -> Optional[float]:
 
 
 def _duration_seconds(value: Any) -> Optional[float]:
-    if not isinstance(value, dict) or not value.get("started_at") or not value.get("finished_at"):
+    if (
+        not isinstance(value, dict)
+        or not value.get("started_at")
+        or not value.get("finished_at")
+    ):
         return None
     try:
         start = datetime.fromisoformat(str(value["started_at"]).replace("Z", "+00:00"))
-        finish = datetime.fromisoformat(str(value["finished_at"]).replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(
+            str(value["finished_at"]).replace("Z", "+00:00")
+        )
     except ValueError:
         return None
     return max(0.0, (finish - start).total_seconds())
@@ -302,8 +539,13 @@ def import_run(
     for raw_path in _trajectory_paths(path):
         data = read_json(raw_path)
         steps = normalize_trajectory(data)
-        is_atif = str(data.get("schema_version") or "").startswith("ATIF-")
-        metadata = _harbor_metadata(raw_path, data) if is_atif else _legacy_metadata(raw_path, data)
+        source_schema_version = validate_trajectory_schema(data)
+        is_atif = source_schema_version is not None
+        metadata = (
+            _harbor_metadata(raw_path, data)
+            if is_atif
+            else _legacy_metadata(raw_path, data)
+        )
         existing = connection.execute(
             "SELECT id FROM trajectories WHERE experiment_id=? AND task_id=?",
             (experiment_id, metadata["storage_task_id"]),
@@ -334,11 +576,13 @@ def import_run(
                 agent_version, model_name, started_at, finished_at, input_tokens,
                 cache_tokens, output_tokens, environment_setup_seconds,
                 agent_setup_seconds, agent_execution_seconds, verifier_seconds
+                , source_schema_version, canonical_schema_version, adapter_version
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(experiment_id, task_id) DO UPDATE SET
                 verdict=excluded.verdict, raw_path=excluded.raw_path,
-                raw_sha256=excluded.raw_sha256, final_patch_path=excluded.final_patch_path,
+                raw_sha256=excluded.raw_sha256,
+                final_patch_path=excluded.final_patch_path,
                 final_log_path=excluded.final_log_path, cost=excluded.cost,
                 api_calls=excluded.api_calls, base_task_id=excluded.base_task_id,
                 trial_name=excluded.trial_name, health_status=excluded.health_status,
@@ -351,7 +595,10 @@ def import_run(
                 environment_setup_seconds=excluded.environment_setup_seconds,
                 agent_setup_seconds=excluded.agent_setup_seconds,
                 agent_execution_seconds=excluded.agent_execution_seconds,
-                verifier_seconds=excluded.verifier_seconds
+                verifier_seconds=excluded.verifier_seconds,
+                source_schema_version=excluded.source_schema_version,
+                canonical_schema_version=excluded.canonical_schema_version,
+                adapter_version=excluded.adapter_version
             """,
             (
                 trajectory_id,
@@ -362,19 +609,34 @@ def import_run(
                 raw_digest,
                 str(final_patch.resolve()) if final_patch.exists() else None,
                 str(final_log.resolve()) if final_log and final_log.exists() else None,
-                metadata["cost"], metadata["api_calls"], metadata["base_task_id"],
-                metadata["trial_name"], metadata["health_status"], metadata["reward"],
+                metadata["cost"],
+                metadata["api_calls"],
+                metadata["base_task_id"],
+                metadata["trial_name"],
+                metadata["health_status"],
+                metadata["reward"],
                 str(raw_event.resolve()) if raw_event else None,
                 sha256_file(raw_event) if raw_event else None,
-                metadata["agent_version"], metadata["model_name"], metadata["started_at"],
-                metadata["finished_at"], metadata["input_tokens"], metadata["cache_tokens"],
-                metadata["output_tokens"], metadata["environment_setup_seconds"],
-                metadata["agent_setup_seconds"], metadata["agent_execution_seconds"],
+                metadata["agent_version"],
+                metadata["model_name"],
+                metadata["started_at"],
+                metadata["finished_at"],
+                metadata["input_tokens"],
+                metadata["cache_tokens"],
+                metadata["output_tokens"],
+                metadata["environment_setup_seconds"],
+                metadata["agent_setup_seconds"],
+                metadata["agent_execution_seconds"],
                 metadata["verifier_seconds"],
+                source_schema_version or "legacy",
+                CANONICAL_SCHEMA_VERSION,
+                ADAPTER_VERSION,
             ),
         )
         connection.execute("DELETE FROM steps WHERE trajectory_id=?", (trajectory_id,))
-        connection.execute("DELETE FROM diagnoses WHERE trajectory_id=?", (trajectory_id,))
+        connection.execute(
+            "DELETE FROM diagnoses WHERE trajectory_id=?", (trajectory_id,)
+        )
         connection.executemany(
             """
             INSERT INTO steps (
@@ -384,10 +646,17 @@ def import_run(
             """,
             [
                 (
-                    trajectory_id, step["step_index"], step["role"], step["action_type"],
-                    step["content"][:12000], step["command"], step["test_status"],
+                    trajectory_id,
+                    step["step_index"],
+                    step["role"],
+                    step["action_type"],
+                    str(sanitize_value(step["content"]))[:12000],
+                    sanitize_value(step["command"]),
+                    step["test_status"],
                     step.get("tool_name"),
-                    json.dumps(step.get("tool_arguments"), ensure_ascii=False),
+                    json.dumps(
+                        sanitize_value(step.get("tool_arguments")), ensure_ascii=False
+                    ),
                 )
                 for step in steps
             ],
@@ -400,7 +669,9 @@ def import_run(
 
 
 def get_trajectory(connection: sqlite3.Connection, trajectory_id: str) -> sqlite3.Row:
-    row = connection.execute("SELECT * FROM trajectories WHERE id=?", (trajectory_id,)).fetchone()
+    row = connection.execute(
+        "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
+    ).fetchone()
     if row is None:
         raise ValueError("Unknown trajectory: %s" % trajectory_id)
     return row
@@ -408,28 +679,38 @@ def get_trajectory(connection: sqlite3.Connection, trajectory_id: str) -> sqlite
 
 def get_steps(connection: sqlite3.Connection, trajectory_id: str) -> List[sqlite3.Row]:
     return connection.execute(
-        "SELECT * FROM steps WHERE trajectory_id=? ORDER BY step_index", (trajectory_id,)
+        "SELECT * FROM steps WHERE trajectory_id=? ORDER BY step_index",
+        (trajectory_id,),
     ).fetchall()
 
 
-def get_diagnosis(connection: sqlite3.Connection, trajectory_id: str) -> Optional[sqlite3.Row]:
+def get_diagnosis(
+    connection: sqlite3.Connection, trajectory_id: str
+) -> Optional[sqlite3.Row]:
     return connection.execute(
         "SELECT * FROM diagnoses WHERE trajectory_id=?", (trajectory_id,)
     ).fetchone()
 
 
-def diagnosable_trajectories(connection: sqlite3.Connection, experiment_id: str) -> List[sqlite3.Row]:
+def diagnosable_trajectories(
+    connection: sqlite3.Connection, experiment_id: str
+) -> List[sqlite3.Row]:
     return connection.execute(
         """
         SELECT * FROM trajectories
-        WHERE experiment_id=? AND verdict IN ('FAIL', 'TIMEOUT', 'INFRA_ERROR', 'UNKNOWN', 'INCOMPLETE')
+        WHERE experiment_id=?
+          AND verdict IN (
+              'FAIL', 'TIMEOUT', 'INFRA_ERROR', 'UNKNOWN', 'INCOMPLETE'
+          )
         ORDER BY base_task_id, trial_name
         """,
         (experiment_id,),
     ).fetchall()
 
 
-def save_diagnosis(connection: sqlite3.Connection, trajectory_id: str, report: Dict[str, Any]) -> None:
+def save_diagnosis(
+    connection: sqlite3.Connection, trajectory_id: str, report: Dict[str, Any]
+) -> None:
     connection.execute(
         """
         INSERT OR REPLACE INTO diagnoses (
@@ -438,20 +719,43 @@ def save_diagnosis(connection: sqlite3.Connection, trajectory_id: str, report: D
             matched_rule, judge_model, prompt_version, judge_input_tokens,
             judge_output_tokens, judge_latency_seconds, judge_thinking,
             judge_max_input_tokens, judge_max_output_tokens, diagnosis_error,
+            rule_version, diagnosis_config_hash, judge_temperature,
+            judge_call_count, trajectory_mode, evidence_validation_level,
             report_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
         """,
         (
-            trajectory_id, report["status"], report.get("responsibility"),
-            report.get("category_code"), report.get("category_name"),
-            report.get("root_cause_step"), report.get("component"), report.get("summary") or "",
-            report.get("confidence"), report.get("decision_source"), report.get("matched_rule"),
-            report.get("judge_model"), report.get("prompt_version") or "unknown",
-            int(report.get("judge_input_tokens") or 0), int(report.get("judge_output_tokens") or 0),
-            float(report.get("judge_latency_seconds") or 0), report.get("judge_thinking"),
-            report.get("max_input_tokens"), report.get("max_output_tokens"),
+            trajectory_id,
+            report["status"],
+            report.get("responsibility"),
+            report.get("category_code"),
+            report.get("category_name"),
+            report.get("root_cause_step"),
+            report.get("component"),
+            report.get("summary") or "",
+            report.get("confidence"),
+            report.get("decision_source"),
+            report.get("matched_rule"),
+            report.get("judge_model"),
+            report.get("prompt_version") or "unknown",
+            int(report.get("judge_input_tokens") or 0),
+            int(report.get("judge_output_tokens") or 0),
+            float(report.get("judge_latency_seconds") or 0),
+            report.get("judge_thinking"),
+            report.get("max_input_tokens"),
+            report.get("max_output_tokens"),
             report.get("diagnosis_error"),
-            json.dumps(report, ensure_ascii=False), utcnow(),
+            report.get("rule_version"),
+            report.get("diagnosis_config_hash"),
+            report.get("judge_temperature"),
+            int(report.get("judge_call_count") or 0),
+            report.get("trajectory_mode"),
+            report.get("evidence_validation_level"),
+            json.dumps(report, ensure_ascii=False),
+            utcnow(),
         ),
     )
     connection.commit()

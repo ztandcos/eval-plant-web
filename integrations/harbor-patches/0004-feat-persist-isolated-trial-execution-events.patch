@@ -1,0 +1,345 @@
+From ba962f4b59f4b0617b42f3e84049c0fdf6c607fd Mon Sep 17 00:00:00 2001
+From: ztandcos <ztao2587@gmail.com>
+Date: Wed, 26 Aug 2026 20:38:00 +0800
+Subject: [PATCH] feat: persist isolated trial execution events
+
+---
+ examples/configs/agents/dsh-minimal-job.yaml | 12 ++++
+ src/harbor/job.py                            | 63 ++++++++++++++++++++
+ src/harbor/trial/hooks.py                    |  1 +
+ src/harbor/trial/queue.py                    | 42 ++++++++++++-
+ tests/unit/test_job_status.py                | 39 ++++++++++++
+ tests/unit/test_trial_queue_integration.py   | 50 ++++++++++++++++
+ 6 files changed, 205 insertions(+), 2 deletions(-)
+
+diff --git a/examples/configs/agents/dsh-minimal-job.yaml b/examples/configs/agents/dsh-minimal-job.yaml
+index 66325835..f09990b2 100644
+--- a/examples/configs/agents/dsh-minimal-job.yaml
++++ b/examples/configs/agents/dsh-minimal-job.yaml
+@@ -1,6 +1,18 @@
+ jobs_dir: jobs
+ n_attempts: 1
++n_concurrent_trials: 4
+ timeout_multiplier: 1.0
++retry:
++  max_retries: 2
++  include_exceptions:
++    - EnvironmentStartTimeoutError
++    - HealthcheckError
++    - SandboxBuildFailedError
++    - NetworkConnectionError
++    - ApiInternalServerError
++    - ApiOverloadedError
++    - ApiConnectionClosedError
++    - ApiResponseStalledError
+ environment:
+   type: docker
+   force_build: false
+diff --git a/src/harbor/job.py b/src/harbor/job.py
+index 9b74e3db..6baaad5d 100644
+--- a/src/harbor/job.py
++++ b/src/harbor/job.py
+@@ -1,4 +1,5 @@
+ import asyncio
++import json
+ import logging
+ import shutil
+ from collections import defaultdict
+@@ -95,6 +96,7 @@ class Job:
+         self.is_resuming = self._existing_job_result is not None
+ 
+         self._trial_completion_lock = asyncio.Lock()
++        self._execution_event_lock = asyncio.Lock()
+ 
+         self._id = (
+             uuid4()
+@@ -132,6 +134,8 @@ class Job:
+         self._trial_queue.add_hook(TrialEvent.START, self._on_trial_started)
+         self._trial_queue.add_hook(TrialEvent.CANCEL, self._on_trial_cancelled)
+         self._trial_queue.add_hook(TrialEvent.END, self._on_trial_completed)
++        for event in TrialEvent:
++            self._trial_queue.add_hook(event, self._record_execution_event)
+ 
+     @classmethod
+     async def create(cls, config: JobConfig) -> "Job":
+@@ -652,6 +656,65 @@ class Job:
+     def _job_result_path(self):
+         return self.job_dir / "result.json"
+ 
++    @property
++    def _execution_events_path(self):
++        return self.job_dir / "execution-events.jsonl"
++
++    def _retryable_exception(self, exception_type: str) -> bool:
++        retry = self.config.retry
++        if retry.exclude_exceptions and exception_type in retry.exclude_exceptions:
++            return False
++        return (
++            not retry.include_exceptions or exception_type in retry.include_exceptions
++        )
++
++    async def _record_execution_event(self, event: TrialHookEvent) -> None:
++        exception = event.result.exception_info
++        exception_type = exception.exception_type if exception else None
++        if event.event == TrialEvent.END:
++            if exception_type in {"AgentTimeoutError", "VerifierTimeoutError"}:
++                state = "TIMEOUT"
++            elif exception_type == CANCELLED_ERROR_TYPE:
++                state = "CANCELLED"
++            elif exception_type and self._retryable_exception(exception_type):
++                state = "INFRA_ERROR"
++            elif exception_type:
++                state = "FAILED"
++            else:
++                state = "SUCCEEDED"
++        elif event.event == TrialEvent.CANCEL:
++            state = "CANCELLED"
++        else:
++            state = "RUNNING"
++        payload = {
++            "event_version": 1,
++            "job_id": str(self.id),
++            "trial_id": str(event.trial_id),
++            "trial_name": event.trial_name,
++            "task_name": event.task_name,
++            "event": event.event.value,
++            "state": state,
++            "timestamp": event.timestamp.isoformat(),
++            "exception_type": exception_type,
++            # Full exception text remains in the trial result where Harbor's
++            # normal secret scrubber applies. The shared status stream keeps
++            # only the non-sensitive exception type.
++            "exception_message": None,
++            "retryable": (
++                self._retryable_exception(exception_type) if exception_type else False
++            ),
++        }
++        async with self._execution_event_lock:
++            try:
++                with self._execution_events_path.open("a", encoding="utf-8") as handle:
++                    handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
++            except OSError as exc:
++                self._logger.warning(
++                    "Could not persist execution event for %s: %s",
++                    event.trial_name,
++                    exc,
++                )
++
+     @staticmethod
+     def _is_cancelled_result(trial_result: TrialResult) -> bool:
+         return (
+diff --git a/src/harbor/trial/hooks.py b/src/harbor/trial/hooks.py
+index 5e69c256..1b85365a 100644
+--- a/src/harbor/trial/hooks.py
++++ b/src/harbor/trial/hooks.py
+@@ -22,6 +22,7 @@ class TrialEvent(Enum):
+     AGENT_START = "agent-start"
+     AGENT_END = "agent-end"
+     VERIFICATION_START = "verification-start"
++    HEARTBEAT = "heartbeat"
+     END = "end"
+     CANCEL = "cancel"
+ 
+diff --git a/src/harbor/trial/queue.py b/src/harbor/trial/queue.py
+index a65a1093..f730b995 100644
+--- a/src/harbor/trial/queue.py
++++ b/src/harbor/trial/queue.py
+@@ -26,6 +26,8 @@ class TrialQueue:
+     instance — Trial handles all event invocations.
+     """
+ 
++    _HEARTBEAT_INTERVAL_SEC = 30.0
++
+     def __init__(
+         self,
+         n_concurrent: int,
+@@ -109,6 +111,42 @@ class TrialQueue:
+         )
+         return min(delay_sec, self._retry_config.max_wait_sec)
+ 
++    async def _run_with_heartbeats(self, trial) -> TrialResult:
++        stopped = asyncio.Event()
++
++        async def run_trial() -> TrialResult:
++            try:
++                return await trial.run()
++            finally:
++                stopped.set()
++
++        async def emit_heartbeats() -> None:
++            while not stopped.is_set():
++                try:
++                    await asyncio.wait_for(
++                        stopped.wait(), timeout=self._HEARTBEAT_INTERVAL_SEC
++                    )
++                except TimeoutError:
++                    await trial._emit(TrialEvent.HEARTBEAT)
++
++        async with asyncio.TaskGroup() as group:
++            result_task = group.create_task(run_trial())
++            group.create_task(emit_heartbeats())
++        return result_task.result()
++
++    @staticmethod
++    def _archive_retry_attempt(trial, attempt: int) -> None:
++        source = trial.paths.trial_dir
++        if not source.exists():
++            return
++        target = (
++            source.parent / "_retries" / trial.config.trial_name / f"retry-{attempt}"
++        )
++        if target.exists():
++            target = target.with_name(f"{target.name}-{trial.result.id}")
++        target.parent.mkdir(parents=True, exist_ok=True)
++        shutil.move(source, target)
++
+     def _setup_hooks(self, trial) -> None:
+         """Wire queue-level hooks to the trial."""
+         if self._uses_agent_concurrency(trial.config):
+@@ -200,7 +238,7 @@ class TrialQueue:
+         for attempt in range(self._retry_config.max_retries + 1):
+             trial = await Trial.create(trial_config)
+             self._setup_hooks(trial)
+-            result = await trial.run()
++            result = await self._run_with_heartbeats(trial)
+ 
+             if result.exception_info is None:
+                 return result
+@@ -219,7 +257,7 @@ class TrialQueue:
+                 )
+                 return result
+ 
+-            shutil.rmtree(trial.paths.trial_dir, ignore_errors=True)
++            self._archive_retry_attempt(trial, attempt)
+ 
+             delay_sec = self._calculate_backoff_delay_sec(attempt)
+ 
+diff --git a/tests/unit/test_job_status.py b/tests/unit/test_job_status.py
+index f1422dcf..1a027e54 100644
+--- a/tests/unit/test_job_status.py
++++ b/tests/unit/test_job_status.py
+@@ -1,5 +1,6 @@
+ from collections import defaultdict
+ from datetime import datetime, timezone
++import json
+ import logging
+ from pathlib import Path
+ from unittest.mock import MagicMock
+@@ -275,6 +276,44 @@ async def test_job_progress_retry_replaces_previous_attempt_counts(
+     assert completed_result.stats.n_retries == 2
+ 
+ 
++@pytest.mark.unit
++async def test_job_persists_execution_events(tmp_path: Path) -> None:
++    job = _make_job(tmp_path)
++    trial_config = job._trial_configs[0]
++    failed = _trial_result(trial_config, exception_type="RuntimeError")
++    try:
++        await job._record_execution_event(_hook_event(TrialEvent.START, trial_config))
++        await job._record_execution_event(
++            _hook_event(TrialEvent.END, trial_config, result=failed)
++        )
++        events = [
++            json.loads(line)
++            for line in job._execution_events_path.read_text().splitlines()
++        ]
++        assert [event["event"] for event in events] == ["start", "end"]
++        assert events[-1]["state"] == "INFRA_ERROR"
++        assert events[-1]["retryable"] is True
++    finally:
++        job._close_logger_handlers()
++
++
++@pytest.mark.unit
++async def test_execution_event_write_failure_does_not_fail_trial_observation(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    job = _make_job(tmp_path)
++    trial_config = job._trial_configs[0]
++    monkeypatch.setattr(
++        Job,
++        "_execution_events_path",
++        property(lambda self: self.job_dir / "missing" / "events.jsonl"),
++    )
++    try:
++        await job._record_execution_event(_hook_event(TrialEvent.START, trial_config))
++    finally:
++        job._close_logger_handlers()
++
++
+ @pytest.mark.unit
+ async def test_job_progress_hooks_count_cancelled_trials(tmp_path: Path) -> None:
+     job = _make_job(tmp_path)
+diff --git a/tests/unit/test_trial_queue_integration.py b/tests/unit/test_trial_queue_integration.py
+index d46c5c02..ecac5a85 100644
+--- a/tests/unit/test_trial_queue_integration.py
++++ b/tests/unit/test_trial_queue_integration.py
+@@ -4,8 +4,10 @@ Integration tests for TrialQueue and JobConfig backward compatibility.
+ 
+ import json
+ import warnings
++import asyncio
+ from datetime import datetime
+ from pathlib import Path
++from types import SimpleNamespace
+ 
+ import pytest
+ 
+@@ -127,6 +129,54 @@ class TestTrialQueueIntegration:
+         assert queue._retry_config == RetryConfig()
+         assert queue._hooks == {event: [] for event in TrialEvent}
+ 
++    @pytest.mark.unit
++    @pytest.mark.asyncio
++    async def test_queue_emits_heartbeats_for_long_trials(self):
++        events = []
++
++        class SlowTrial:
++            async def run(self):
++                await asyncio.sleep(0.01)
++                return "done"
++
++            async def _emit(self, event):
++                events.append(event)
++
++        queue = TrialQueue(n_concurrent=1)
++        queue._HEARTBEAT_INTERVAL_SEC = 0.001
++        assert await queue._run_with_heartbeats(SlowTrial()) == "done"
++        assert TrialEvent.HEARTBEAT in events
++
++    @pytest.mark.unit
++    def test_retry_attempt_is_archived_instead_of_deleted(self, tmp_path):
++        trial_dir = tmp_path / "job" / "trial-a"
++        trial_dir.mkdir(parents=True)
++        (trial_dir / "result.json").write_text("failed")
++        trial = SimpleNamespace(
++            paths=SimpleNamespace(trial_dir=trial_dir),
++            config=SimpleNamespace(trial_name="trial-a"),
++        )
++        TrialQueue._archive_retry_attempt(trial, 0)
++        archived = tmp_path / "job" / "_retries" / "trial-a" / "retry-0"
++        assert not trial_dir.exists()
++        assert (archived / "result.json").read_text() == "failed"
++
++    @pytest.mark.unit
++    def test_retry_archive_collision_uses_attempt_id(self, tmp_path):
++        trial_dir = tmp_path / "job" / "trial-a"
++        trial_dir.mkdir(parents=True)
++        (trial_dir / "result.json").write_text("new failure")
++        existing = tmp_path / "job" / "_retries" / "trial-a" / "retry-0"
++        existing.mkdir(parents=True)
++        trial = SimpleNamespace(
++            paths=SimpleNamespace(trial_dir=trial_dir),
++            config=SimpleNamespace(trial_name="trial-a"),
++            result=SimpleNamespace(id="attempt-id"),
++        )
++        TrialQueue._archive_retry_attempt(trial, 0)
++        archived = existing.with_name("retry-0-attempt-id")
++        assert (archived / "result.json").read_text() == "new failure"
++
+     @pytest.mark.unit
+     def test_job_initializes_trial_queue_with_existing_constructor_shape(
+         self, tmp_path
+-- 
+2.50.1 (Apple Git-155)
+

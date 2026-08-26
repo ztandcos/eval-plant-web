@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -21,10 +22,28 @@ LLM_CATEGORIES = {
     "L4": "反馈、验证与结束",
 }
 
-DIAGNOSIS_STATUSES = ("ATTRIBUTED", "UNDETERMINED", "INPUT_TOO_LARGE", "FAILED")
+DIAGNOSIS_STATUSES = (
+    "ATTRIBUTED",
+    "HARNESS_SUSPECTED",
+    "UNDETERMINED",
+    "INPUT_TOO_LARGE",
+    "FAILED",
+)
 RESPONSIBILITIES = ("HARNESS", "LLM")
 CONFIDENCE_LEVELS = ("HIGH", "MEDIUM", "LOW")
 VERDICTS = ("PASS", "FAIL", "TIMEOUT", "INFRA_ERROR", "UNKNOWN", "INCOMPLETE")
+SUPPORTED_ATIF_VERSIONS = {"ATIF-v1.%d" % minor for minor in range(8)}
+CANONICAL_SCHEMA_VERSION = "evalplant-canonical-v1"
+ADAPTER_VERSION = "atif-adapter-v1"
+
+SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+"),
+    re.compile(
+        r"(?i)\b(api[_-]?key|access[_-]?token|password|secret)\b"
+        r"(\s*[:=]\s*)[^\s,;\"']+"
+    ),
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -39,6 +58,49 @@ def read_json(path: Path) -> Dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("Expected a JSON object in %s" % path)
+    return value
+
+
+def validate_trajectory_schema(data: Dict[str, Any]) -> Optional[str]:
+    version = str(data.get("schema_version") or "")
+    if not version:
+        return None
+    if version not in SUPPORTED_ATIF_VERSIONS:
+        raise ValueError("Unsupported trajectory schema_version: %s" % version)
+    if not isinstance(data.get("steps"), list):
+        raise ValueError("ATIF trajectory must contain a steps array")
+    for position, step in enumerate(data["steps"], start=1):
+        if not isinstance(step, dict):
+            raise ValueError("ATIF step %s must be an object" % position)
+        if "step_id" not in step or "source" not in step:
+            raise ValueError("ATIF step %s must contain step_id and source" % position)
+    return version
+
+
+def redact_text(text: str) -> str:
+    redacted = text
+    redacted = SECRET_PATTERNS[0].sub("<REDACTED_SECRET>", redacted)
+    redacted = SECRET_PATTERNS[1].sub(r"\1<REDACTED_SECRET>", redacted)
+    redacted = SECRET_PATTERNS[2].sub(r"\1\2<REDACTED_SECRET>", redacted)
+    return redacted
+
+
+def sanitize_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, list):
+        return [sanitize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "<REDACTED_SECRET>"
+                if re.search(
+                    r"(?i)(api[_-]?key|access[_-]?token|password|secret)", str(key)
+                )
+                else sanitize_value(item)
+            )
+            for key, item in value.items()
+        }
     return value
 
 
@@ -169,7 +231,8 @@ def _normalize_atif(data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def normalize_trajectory(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if str(data.get("schema_version") or "").startswith("ATIF-"):
+    version = validate_trajectory_schema(data)
+    if version:
         return _normalize_atif(data)
     messages = data.get("messages")
     if messages is None and isinstance(data.get("trajectory"), list):
@@ -216,7 +279,7 @@ def summarize_step(
     step: Dict[str, Any], limit: Optional[int] = 12000
 ) -> Dict[str, Any]:
     content = str(step.get("content") or "")
-    return {
+    summary = {
         "step": step["step_index"],
         "role": step.get("role"),
         "action": step.get("action_type"),
@@ -224,6 +287,183 @@ def summarize_step(
         "arguments": step.get("tool_arguments"),
         "test_status": step.get("test_status"),
         "content": content if limit is None else content[:limit],
+    }
+    if limit is not None:
+        summary["content_truncated"] = len(content) > limit
+    return summary
+
+
+def build_structured_index(steps: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    index = []
+    for step in steps:
+        content = str(step.get("content") or "")
+        role = str(step.get("role") or "").lower()
+        index.append(
+            {
+                "step_id": step["step_index"],
+                "role": step.get("role"),
+                "event_type": step.get("action_type"),
+                "tool": step.get("tool_name"),
+                "command": (step.get("command") or "")[:300] or None,
+                "test_status": step.get("test_status"),
+                "has_explicit_error": bool(
+                    step.get("action_type") == "tool_error"
+                    or step.get("test_status") == "failed"
+                    or (
+                        role in {"tool", "exit", "system"}
+                        and re.search(
+                            r"\b(error|exception|traceback|failed)\b",
+                            content[:2000],
+                            re.I,
+                        )
+                    )
+                ),
+            }
+        )
+    return index
+
+
+def structured_failure_facts(
+    steps: Iterable[Dict[str, Any]], runtime: Dict[str, Any], verifier_log: str
+) -> Dict[str, Any]:
+    steps = list(steps)
+    index = build_structured_index(steps)
+    anomalies = [item["step_id"] for item in index if item["has_explicit_error"]]
+    failed_tests = [
+        item["step_id"] for item in index if item.get("test_status") == "failed"
+    ]
+    first_anomaly = min(anomalies + failed_tests) if anomalies or failed_tests else None
+    earlier = [
+        item["step_id"]
+        for item in index
+        if first_anomaly is not None and item["step_id"] < first_anomaly
+    ]
+    last_agent = next(
+        (
+            step
+            for step in reversed(steps)
+            if step.get("role") in ("agent", "assistant")
+        ),
+        None,
+    )
+    last_agent_text = str((last_agent or {}).get("content") or "")
+    completion_claim = bool(
+        re.search(
+            r"\b(done|completed|finished|successful)\b|任务已完成|修复完成",
+            last_agent_text,
+            re.I,
+        )
+        and not re.search(
+            r"\b(not|failed|unable)\b|未完成|失败|无法", last_agent_text, re.I
+        )
+    )
+    verifier_failed = runtime.get("verdict") == "FAIL" or bool(
+        re.search(r"\b(failed|failure|error)\b", verifier_log, re.I)
+    )
+    return {
+        "step_count": len(steps),
+        # This is only a navigation boundary; absence of an error is not proof
+        # that the step succeeded.
+        "last_pre_anomaly_step": max(earlier) if earlier else None,
+        "first_anomaly_step": first_anomaly,
+        "tool_error_steps": [
+            item["step_id"] for item in index if item["event_type"] == "tool_error"
+        ],
+        "failed_test_steps": failed_tests,
+        "file_edit_steps": [
+            item["step_id"] for item in index if item["event_type"] == "file_edit"
+        ],
+        "missing_tool_results": runtime.get("missing_tool_results") or [],
+        "context_truncated": bool(runtime.get("context_truncation_markers")),
+        "verifier_status": "FAIL" if verifier_failed else runtime.get("verdict"),
+        "termination_reason": runtime.get("exception_type") or "recorded_end",
+        "agent_verifier_conflict": bool(completion_claim and verifier_failed),
+    }
+
+
+def retrieval_step_ids(
+    steps: Iterable[Dict[str, Any]],
+    facts: Dict[str, Any],
+    requested: Iterable[int] = (),
+) -> List[int]:
+    steps = list(steps)
+    positions = {step["step_index"]: position for position, step in enumerate(steps)}
+    requested_ids = {int(item) for item in requested if int(item) in positions}
+    if requested_ids:
+        return sorted(requested_ids)[:100]
+    seeds = set()
+    for key in ("first_anomaly_step", "last_pre_anomaly_step"):
+        if facts.get(key) in positions:
+            seeds.add(int(facts[key]))
+    for key in ("tool_error_steps", "failed_test_steps"):
+        items = [int(item) for item in facts.get(key, []) if int(item) in positions]
+        seeds.update(items[:10] + items[-10:])
+    seeds.update(step["step_index"] for step in steps[:2] + steps[-3:])
+    selected = set()
+    for step_id in seeds:
+        position = positions[step_id]
+        for neighbor in steps[max(0, position - 2) : position + 3]:
+            selected.add(neighbor["step_index"])
+    return sorted(selected)[:80]
+
+
+def build_segment_index(
+    index: List[Dict[str, Any]], max_segments: int = 100
+) -> List[Dict[str, Any]]:
+    if not index:
+        return []
+    segment_size = max(1, math.ceil(len(index) / max_segments))
+    segments = []
+    for offset in range(0, len(index), segment_size):
+        chunk = index[offset : offset + segment_size]
+        event_counts: Dict[str, int] = {}
+        for item in chunk:
+            event = str(item.get("event_type") or "unknown")
+            event_counts[event] = event_counts.get(event, 0) + 1
+        notable = [
+            item["step_id"]
+            for item in chunk
+            if item.get("has_explicit_error")
+            or item.get("test_status") in {"passed", "failed"}
+            or item.get("event_type") == "file_edit"
+        ]
+        segments.append(
+            {
+                "start_step": chunk[0]["step_id"],
+                "end_step": chunk[-1]["step_id"],
+                "step_count": len(chunk),
+                "event_counts": event_counts,
+                "notable_step_ids": notable[:20],
+                "notable_steps_omitted": max(0, len(notable) - 20),
+            }
+        )
+    return segments
+
+
+def hierarchical_trajectory_view(
+    steps: Iterable[Dict[str, Any]],
+    facts: Dict[str, Any],
+    requested: Iterable[int] = (),
+) -> Dict[str, Any]:
+    steps = list(steps)
+    selected = set(retrieval_step_ids(steps, facts, requested))
+    index = build_structured_index(steps)
+    return {
+        "mode": "HIERARCHICAL",
+        "total_steps": len(steps),
+        "indexed_steps": len(steps),
+        "segment_index": build_segment_index(index),
+        "retrieved_steps": [
+            summarize_step(step, 1200)
+            for step in steps
+            if step["step_index"] in selected
+        ],
+        "retrieved_step_ids": sorted(selected),
+        "coverage": {
+            "all_steps_indexed": True,
+            "raw_trace_available": True,
+            "raw_steps_included": len(selected),
+        },
     }
 
 

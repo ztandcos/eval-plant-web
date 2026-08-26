@@ -2,100 +2,62 @@
 
 ## 一句话定位
 
-EvalPlant 是面向 Coding Agent 的离线评测诊断工具：Harbor 与 DeepSeek Harness 负责在容器里执行 Benchmark，EvalPlant 把执行结果统一为可查询数据，区分 Harness 故障与 LLM 行为错误，并输出带原始证据的诊断和统计报告。
+EvalPlant 是 Coding Agent 的离线评测与故障诊断后台：Harbor 和 DeepSeek Harness 负责可靠执行，EvalPlant 负责把运行状态与失败轨迹转换成可查询、可审计、可比较的诊断结果。它不只是“把日志发给 LLM”，而是把执行隔离、责任契约、结构事实、证据校验、版本口径和人工验收接口连成一条管线。
 
-它解决的不是“再造一个 Benchmark Runner”，而是任务跑完以后工程团队最常遇到的问题：失败究竟是模型做错了，还是工具、上下文、容器、调度、日志或 Verifier 出了问题。
-
-## 实习工作形成的两层交付
-
-第一层是执行集成。在 Harbor 基线之上接入官方 DeepSeek Harness SDK，新增 `dsh-minimal` Agent，把 SDK 事件转换为 ATIF，记录模型、版本、token、成本和工具调用，同时避免把 API Key 放入进程参数。由于 Harbor 上游源码较大，交付物采用三个可重放 Git 补丁，而不是复制整个仓库。
-
-第二层是诊断平台。EvalPlant 导入 Harbor job，保存实验、轨迹和步骤，先用确定性事实识别明确 Harness 故障，其余失败再将完整轨迹交给一次 LLM Judge。Judge 输出必须符合固定分类和 JSON 结构，引用证据必须能在原始轨迹或日志中逐字找到。
+## 最终链路
 
 ```text
 Benchmark
-    ↓
-Harbor + dsh-minimal + Docker
-    ↓
-ATIF + result.json + Verifier log
-    ↓
-EvalPlant import
-    ↓
-Harness hard rules ──明确故障──→ Harness diagnosis
-    │
-    └──其余失败──→ one LLM call ─→ evidence validation
-                                      ↓
-SQLite ─→ inspect / statistics / JSON report
+  ↓
+Harbor + dsh-minimal + container
+  ├─ 有界并发、每任务隔离
+  ├─ heartbeat / lifecycle JSONL
+  └─ 仅基础设施异常重试，旧 attempt 保留
+  ↓
+ATIF + result.json + verifier log
+  ↓
+schema fail-closed → canonical adapter → secret redaction
+  ↓
+Harness precision-first rules
+  ├─ 硬契约已被违反 → 规则诊断，Judge 调用 0 次
+  └─ 未命中或存在歧义 → 结构化事实 + constrained Judge
+       ├─ 短轨迹 FULL，1 次调用
+       └─ 长轨迹本地全量索引，最多 1 次按步骤补证据，共最多 2 次
+  ↓
+证据来源与输出结构校验 → SQLite → inspect / report / evaluation
 ```
 
-## 已交付能力
+## 已实现与验收证据
 
-| 能力 | 当前状态 | 验收证据 |
+| 能力 | 实现状态 | 可核验证据 |
 |---|---|---|
-| Harbor 接入 DeepSeek Harness | 完成 | 三个补丁可在干净 Harbor 基线上重新应用 |
-| DeepSeek Harness 轨迹转 ATIF | 完成 | Harbor 适配器单元测试覆盖事件和 token 转换 |
-| Harbor job 导入 | 完成 | 支持 ATIF、Verifier、运行元数据和重复实验 |
-| Harness / LLM 责任分流 | 完成 MVP | 硬规则只相信结构化事实，歧义交给 Judge |
-| 错误分类 | 完成 | Harness 7 层，LLM 4 类，代码稳定、中文说明 |
-| 单次 Judge 与成本保护 | 完成 | thinking 关闭、输出上限 4096、保守输入估算、超限不调用 |
-| 证据防伪 | 完成 | step ID 和 quote 都由程序回查原始输入 |
-| 诊断与统计持久化 | 完成 | SQLite 只有 4 张核心表，每条轨迹保留最新诊断 |
-| 人工查看与机器导出 | 完成 | Rich 终端查看；`report --output` 导出 JSON |
-| 无 Key 可复现演示 | 完成 | `examples/demo-job` 可稳定命中 Harness H-T |
+| DeepSeek Harness 接入 Harbor | 已实现 | 4 个可重放补丁；适配器保留模型、版本、token、成本和 ATIF 事件 |
+| 任务隔离与自动重试 | 已实现 | Harbor 原生 semaphore + retry；重试只作用于失败 trial，旧 attempt 移入 `_retries` |
+| 实时运行观测 | 已实现 | START/阶段/HEARTBEAT/END/CANCEL 事件写入 `execution-events.jsonl`；`evalplant observe` 聚合 RUNNING、LOST、TIMEOUT、INFRA_ERROR 等状态 |
+| 上游 schema 演进 | 已实现 | 已知 ATIF v1.0–v1.7 才能导入；未知版本拒绝；canonical、adapter 和 SQLite `user_version` 均持久化 |
+| 敏感数据保护 | 已实现本地边界 | API Key 不进入进程参数；数据库预览、工具参数和 Judge payload 脱敏；状态流不保存异常正文；原始轨迹不复制进数据库 |
+| Harness / LLM 责任边界 | 已实现 | contractual responsibility 写入规约和 Prompt；硬规则只依赖结构化事实 |
+| 多因素因果表达 | 已实现 | 一个 primary 用于统计，最多 3 个 secondary，加 causal chain、failure surface 和 counterfactual |
+| 长轨迹诊断 | 已实现 | 本地索引所有步骤，发送有界分段目录和关键原文；最多二次 Judge，不调用摘要模型 |
+| Judge 成本与漂移控制 | 已实现 | thinking 关闭、temperature 0、输出 4096、输入预算；保存模型/Prompt/规则/schema/配置哈希；混合配置报告告警 |
+| 证据校验 | 已实现明确边界 | 程序验证 step、quote、来源、关系字段和因果结构；不把字符串存在冒充语义蕴含 |
+| 诊断可信度评测设施 | 已实现，真实标签待输入 | `evaluation.py` 计算 coverage、总体/选择性责任与类别准确率、根因 exact/near、证据支持率和重复运行一致率 |
+| 工程决策统计 | 已实现 | 按模型、Agent 版本、责任、类别、组件、token、成本、耗时统计，并把 H/L 分类映射到整改方向 |
 
-## 当前数据与真实结果
+当前自动验证结果是 EvalPlant 19 项通过，Harbor 相关 71 项通过，其中 DSH 适配器 9 项、任务状态与队列 62 项。Harbor 四个补丁已在干净基线 `b37833221e27435a18d7acdd41d875cdc2831893` 上重新应用，恢复 tree 指纹为 `bfea9c800c913be0d23225b7f8472a3ac5f06f9e`。
 
-本机工作库保留两个 Terminal-Bench pilot，共 12 次真实任务运行和 285 个轨迹步骤，其中 8 次 PASS、4 次 FAIL。目前只对一条失败轨迹执行了真实 Judge，结果为 `LLM / L4 / HIGH`，输入 8723 token、输出 294 token、耗时 5.61 秒。
+## 当前仍未宣称完成的唯一效果验收
 
-这条结果的证据原文全部通过校验，但人工复核认为第 14 步更像症状而非最早根因。该案例促使 Prompt 从 `engineering_diagnosis_v1` 升级到 `engineering_diagnosis_v2`：最终总结不能仅因与 Verifier 冲突就被当成根因；Agent 最后观察正常而 Verifier 随后异常、且中间没有证据时，应返回 `UNDETERMINED`。
+代码设施已经就绪，但“诊断准确”不能由开发者或被测 Judge 自证。最后需要下载公开真实失败轨迹，找独立人工审核责任、类别、first sufficient cause 步骤和证据是否真的支持结论，再固定同一配置重复诊断计算稳定性。Tracebench 下载与转换脚本、金标格式、证据 review 格式和指标程序均已交付；真实人工标签不会由模型伪造。
 
-因此当前可以证明的是“完整工程链路可运行、数据可审计、证据不可伪造”，不能宣称“归因准确率已经得到证明”。这是本项目刻意保留的诚实边界。
+这意味着面试时可以确定地说“系统已完成并通过工程测试”，也必须诚实地说“目前还没有足够人工样本宣称某个准确率”。早期 12 条本地 Terminal-Bench 运行和一次旧 Prompt Judge 只能证明链路跑通过，不能作为 v3 效果数字。
 
-## 验收方式
+## 设计边界
 
-### 1. 无外部依赖演示
+SQLite 是刻意选择的单机工作库，WAL 支持当前并发读取和单写入场景。它不是多租户、千万级服务的最终存储；到多进程高频写入时，应把 attempts/metadata 切到 PostgreSQL，把原始轨迹放对象存储。当前没有为尚不存在的规模提前增加 repository 抽象。
 
-```bash
-uv sync
-DEMO_DB=/tmp/evalplant-demo.db
-uv run evalplant --db "$DEMO_DB" import examples/demo-job \
-  --experiment demo --agent-model demo-model
-uv run evalplant --db "$DEMO_DB" analyze \
-  --experiment demo --model not-called
-uv run evalplant --db "$DEMO_DB" report \
-  --experiment demo --output /tmp/evalplant-demo-report.json
-```
+系统只做诊断和统计，不让 EvalPlant 控制 Harbor 重试，也不自动修改 Agent、生成插件或上线修复。在线用户反馈按用户要求暂不实现。原始轨迹仍受本机文件权限和 Harbor 生命周期管理；多用户 Web 部署前还需要对象级权限、加密存储和 retention job。
 
-预期结果是 `HARNESS / H-T / missing_tool_result`，诊断 token 为 0。
+## 面试表达
 
-### 2. EvalPlant 自动测试
-
-```bash
-uv run python -m unittest discover -s tests -v
-```
-
-测试覆盖四表数据库、ATIF 导入、重复实验 ID、Harness 硬规则、普通 Agent 超时边界、单次 Judge、Prompt 版本、证据防伪、输入超限、报告导出和随仓库交付的演示数据。
-
-### 3. Harbor 定制恢复
-
-按 `integrations/README.md` 在指定 Harbor 基线应用三个补丁。恢复后的 Git tree 应为 `71fedeeb4086ad858599fd825eba4465a44c8303`，随后执行：
-
-```bash
-uv run pytest tests/unit/agents/installed/test_dsh_minimal.py -q
-```
-
-## 项目边界
-
-当前交付只做离线诊断和统计，不包括 Web 控制台、在线用户反馈、插件生成、自动修复、自动重跑和归因算法竞赛。这些能力并不是忘记实现，而是为了让实习项目形成一条真正可验收的主线而主动删去。
-
-Raw、Graph、G-RAV 和 DeepDebug 的比较代码及 Who&When 旧资料已删除；早期实验说明单次 Judge 结果存在波动，也推动项目从“发明定位算法”转向“建立可审计诊断机制”。
-
-## 已知限制与下一阶段
-
-最重要的限制是样本复核不足。下一阶段不应先做前端，而应选取 10～20 条真实失败轨迹，由人工复核责任域、主要类别、根因步骤和证据充分性，形成一份小而可信的诊断验收集。只有边界稳定后，才值得批量运行或建设 Web 控制台。
-
-第二个限制是 Judge 费用只能统计 token 和耗时，当前模型接口没有返回本次 Judge 的美元费用，因此系统不会根据未知价格表伪造成本。第三个限制是本机历史数据库中的轨迹路径指向原 Harbor job 目录；交付仓库通过独立 demo 和 Harbor 补丁保证可复现，但历史原始任务数据不随 Git 发布。
-
-## 面试或答辩时的核心表达
-
-这个项目最有价值的部分不是“调用 LLM 看日志”，而是把执行、数据和诊断边界做清楚：执行结果与诊断状态分开，Harness 与 LLM 责任分开，硬事实与模型判断分开，原始证据与摘要分开，Prompt 和 token 配置可审计，证据不足允许不下结论。它展示的是 Agent 评测工程中的可复现性、可观测性、成本控制和诚实评估。
+如果只写脚本，确实可以解析一次 ATIF 并调用 DeepSeek。EvalPlant 的工程价值是：一千次运行之后，仍能区分最终任务和历史失败 attempt，知道结果由哪套 Prompt/规则/schema 产生，找到原始证据，拒绝证据不足的判断，发现不同配置不可比较，并把 H-T、H-C、L3、L4 等统计直接映射到工具链、上下文、模型 tool-use 和完成前验证的整改优先级。这是“可验证边界的诊断系统”，不是“LLM 日志分类器”。

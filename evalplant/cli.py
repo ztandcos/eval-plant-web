@@ -14,11 +14,13 @@ from . import __version__
 from .db import (
     connect,
     diagnosable_trajectories,
+    execution_status,
     get_diagnosis,
     get_steps,
     get_trajectory,
     import_run,
     save_diagnosis,
+    sync_execution_events,
 )
 from .judge import DEFAULT_MAX_INPUT_TOKENS, analyze_trajectory, failed_diagnosis
 from .metrics import report
@@ -37,7 +39,45 @@ def _read_optional(value: Optional[str]) -> str:
 
 def command_import(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
     ids = import_run(connection, _path(args.path), args.experiment, args.agent_model)
-    console.print("Imported [bold green]%s[/bold green] trajectory(s): %s" % (len(ids), ", ".join(ids)))
+    job_path = _path(args.path)
+    if job_path.is_dir():
+        sync_execution_events(connection, job_path, args.experiment)
+    console.print(
+        "Imported [bold green]%s[/bold green] trajectory(s): %s"
+        % (len(ids), ", ".join(ids))
+    )
+
+
+def command_observe(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    if args.lost_after_seconds <= 0:
+        raise ValueError("--lost-after-seconds must be positive")
+    job_path = _path(args.path)
+    imported = sync_execution_events(connection, job_path, args.experiment)
+    result = execution_status(connection, args.experiment, args.lost_after_seconds)
+    if args.output:
+        output = _path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    table = Table("Trial", "Attempt", "State", "Phase", "Updated", "Exception")
+    for item in result["attempts"]:
+        table.add_row(
+            item["trial_name"],
+            str(item["attempt_number"]),
+            item["state"],
+            item["phase"],
+            item["updated_at"],
+            item["exception_type"] or "",
+        )
+    summary = "logical=%s attempts=%s retries=%s states=%s synced=%s" % (
+        result["logical_trials"],
+        result["total_attempts"],
+        result["retries"],
+        json.dumps(result["states"], ensure_ascii=False, sort_keys=True),
+        imported,
+    )
+    console.print(Panel(table, title=summary))
 
 
 def command_inspect(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
@@ -55,7 +95,8 @@ def command_inspect(args: argparse.Namespace, connection: sqlite3.Connection) ->
         lines += [
             "Diagnosis: %s" % diagnosis["status"],
             "Responsibility: %s" % (diagnosis["responsibility"] or "UNDETERMINED"),
-            "Category: %s %s" % (diagnosis["category_code"] or "", diagnosis["category_name"] or ""),
+            "Category: %s %s"
+            % (diagnosis["category_code"] or "", diagnosis["category_name"] or ""),
             "Component: %s" % (diagnosis["component"] or "n/a"),
             "Confidence: %s" % (diagnosis["confidence"] or "n/a"),
             "Summary: %s" % diagnosis["summary"],
@@ -63,13 +104,19 @@ def command_inspect(args: argparse.Namespace, connection: sqlite3.Connection) ->
         root_step = diagnosis["root_cause_step"]
         detail = json.loads(diagnosis["report_json"])
         evidence_steps = {
-            item["step_id"] for item in detail.get("evidence", []) if item.get("step_id") is not None
+            item["step_id"]
+            for item in detail.get("evidence", [])
+            if item.get("step_id") is not None
         }
     console.print(Panel("\n".join(lines), title="Trajectory %s" % trajectory["id"]))
 
     table = Table("Step", "Role", "Type", "Command / content", "Test")
     for step in get_steps(connection, args.trajectory):
-        marker = "★" if step["step_index"] == root_step else ("•" if step["step_index"] in evidence_steps else "")
+        marker = (
+            "★"
+            if step["step_index"] == root_step
+            else ("•" if step["step_index"] in evidence_steps else "")
+        )
         text = step["command"] or step["content_preview"].replace("\n", " ")
         table.add_row(
             "%s %s" % (step["step_index"], marker),
@@ -86,12 +133,18 @@ def command_analyze(args: argparse.Namespace, connection: sqlite3.Connection) ->
     if args.trajectory:
         trajectories = [row for row in trajectories if row["id"] == args.trajectory]
     if not trajectories:
-        raise ValueError("No diagnosable trajectories in experiment %s" % args.experiment)
-    connection.execute("UPDATE experiments SET judge_model=? WHERE id=?", (args.model, args.experiment))
+        raise ValueError(
+            "No diagnosable trajectories in experiment %s" % args.experiment
+        )
+    connection.execute(
+        "UPDATE experiments SET judge_model=? WHERE id=?", (args.model, args.experiment)
+    )
     connection.commit()
     for trajectory in trajectories:
         if get_diagnosis(connection, trajectory["id"]) and not args.force:
-            console.print("[dim]%s already diagnosed[/dim]" % trajectory["base_task_id"])
+            console.print(
+                "[dim]%s already diagnosed[/dim]" % trajectory["base_task_id"]
+            )
             continue
         try:
             result = analyze_trajectory(
@@ -103,8 +156,7 @@ def command_analyze(args: argparse.Namespace, connection: sqlite3.Connection) ->
                 args.max_input_tokens,
             )
         except Exception as error:
-            result = failed_diagnosis(error, args.model)
-            result["max_input_tokens"] = args.max_input_tokens
+            result = failed_diagnosis(error, args.model, args.max_input_tokens)
         save_diagnosis(connection, trajectory["id"], result)
         color = "green" if result["status"] == "ATTRIBUTED" else "yellow"
         console.print(
@@ -120,7 +172,9 @@ def command_analyze(args: argparse.Namespace, connection: sqlite3.Connection) ->
             )
         )
         if result.get("diagnosis_error"):
-            error_console.print("[red]Diagnosis failed:[/red] %s" % result["diagnosis_error"])
+            error_console.print(
+                "[red]Diagnosis failed:[/red] %s" % result["diagnosis_error"]
+            )
 
 
 def _number(value: Optional[float], suffix: str = "") -> str:
@@ -129,10 +183,18 @@ def _number(value: Optional[float], suffix: str = "") -> str:
 
 def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
     result = report(connection, args.experiment)
+    if not result["diagnoses_comparable"]:
+        error_console.print(
+            "[bold yellow]Warning:[/bold yellow] diagnoses use multiple "
+            "configurations; "
+            "do not compare or aggregate them as one accuracy result."
+        )
     if args.output:
         diagnoses = connection.execute(
             """
-            SELECT t.id, t.base_task_id, t.verdict, t.health_status, d.report_json
+            SELECT t.id, t.base_task_id, t.verdict, t.health_status,
+                   t.source_schema_version, t.canonical_schema_version,
+                   t.adapter_version, d.report_json
             FROM trajectories t JOIN diagnoses d ON d.trajectory_id=t.id
             WHERE t.experiment_id=? ORDER BY t.base_task_id, t.trial_name
             """,
@@ -146,6 +208,9 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
                     "task_id": row["base_task_id"],
                     "verdict": row["verdict"],
                     "health_status": row["health_status"],
+                    "source_schema_version": row["source_schema_version"],
+                    "canonical_schema_version": row["canonical_schema_version"],
+                    "adapter_version": row["adapter_version"],
                     "diagnosis": json.loads(row["report_json"]),
                 }
                 for row in diagnoses
@@ -163,39 +228,94 @@ def command_report(args: argparse.Namespace, connection: sqlite3.Connection) -> 
         ("Total tasks", result["total_tasks"]),
         ("Successful tasks", result["successful_tasks"]),
         ("Failed tasks", result["failed_tasks"]),
-        ("Verdicts", json.dumps(result["verdicts"], ensure_ascii=False, sort_keys=True)),
-        ("Diagnosis statuses", json.dumps(result["diagnosis_statuses"], ensure_ascii=False, sort_keys=True)),
-        ("Responsibilities", json.dumps(result["responsibilities"], ensure_ascii=False, sort_keys=True)),
-        ("Harness layers", json.dumps(result["harness_layers"], ensure_ascii=False, sort_keys=True)),
-        ("LLM categories", json.dumps(result["llm_categories"], ensure_ascii=False, sort_keys=True)),
-        ("Confidence", json.dumps(result["confidence"], ensure_ascii=False, sort_keys=True)),
-        ("Decision source", json.dumps(result["decision_sources"], ensure_ascii=False, sort_keys=True)),
-        ("Components", json.dumps(result["components"], ensure_ascii=False, sort_keys=True)),
+        (
+            "Verdicts",
+            json.dumps(result["verdicts"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Diagnosis statuses",
+            json.dumps(
+                result["diagnosis_statuses"], ensure_ascii=False, sort_keys=True
+            ),
+        ),
+        (
+            "Responsibilities",
+            json.dumps(result["responsibilities"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Harness layers",
+            json.dumps(result["harness_layers"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "LLM categories",
+            json.dumps(result["llm_categories"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Confidence",
+            json.dumps(result["confidence"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Decision source",
+            json.dumps(result["decision_sources"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Components",
+            json.dumps(result["components"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Diagnosis configs",
+            json.dumps(
+                result["diagnosis_config_hashes"], ensure_ascii=False, sort_keys=True
+            ),
+        ),
+        ("Diagnoses comparable", result["diagnoses_comparable"]),
+        (
+            "Trajectory modes",
+            json.dumps(result["trajectory_modes"], ensure_ascii=False, sort_keys=True),
+        ),
+        (
+            "Recommended actions",
+            json.dumps(
+                result["recommended_actions"], ensure_ascii=False, sort_keys=True
+            ),
+        ),
         ("Average input tokens", _number(result["average_input_tokens"])),
         ("Average cache tokens", _number(result["average_cache_tokens"])),
         ("Average output tokens", _number(result["average_output_tokens"])),
         ("Average run cost", _number(result["average_cost"], " USD")),
         ("Average agent time", _number(result["average_agent_seconds"], "s")),
         ("Average verifier time", _number(result["average_verifier_seconds"], "s")),
-        ("Diagnosis input/output tokens", "%s / %s" % (result["diagnosis_input_tokens"], result["diagnosis_output_tokens"])),
+        (
+            "Diagnosis input/output tokens",
+            "%s / %s"
+            % (result["diagnosis_input_tokens"], result["diagnosis_output_tokens"]),
+        ),
         ("Diagnosis latency", _number(result["diagnosis_latency_seconds"], "s")),
     ):
         table.add_row(str(label), str(value))
     console.print(Panel(table, title=args.experiment))
 
     grouped = Table("Group", "Total", "Pass", "Fail", "Harness", "LLM")
-    for prefix, rows in (("model", result["by_model"]), ("agent", result["by_agent_version"])):
+    for prefix, rows in (
+        ("model", result["by_model"]),
+        ("agent", result["by_agent_version"]),
+    ):
         for name, values in rows.items():
             grouped.add_row(
                 "%s:%s" % (prefix, name),
-                str(values["total"]), str(values["passed"]), str(values["failed"]),
-                str(values["harness"]), str(values["llm"]),
+                str(values["total"]),
+                str(values["passed"]),
+                str(values["failed"]),
+                str(values["harness"]),
+                str(values["llm"]),
             )
     console.print(Panel(grouped, title="Breakdown"))
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="evalplant", description="Harbor trajectory diagnosis and statistics")
+    root = argparse.ArgumentParser(
+        prog="evalplant", description="Harbor trajectory diagnosis and statistics"
+    )
     root.add_argument("--version", action="version", version=__version__)
     root.add_argument("--db", default=os.getenv("EVALPLANT_DB", "data/evalplant.db"))
     commands = root.add_subparsers(dest="command", required=True)
@@ -206,13 +326,26 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--agent-model")
     sub.set_defaults(handler=command_import)
 
-    sub = commands.add_parser("inspect", help="Show one trajectory and its latest diagnosis")
+    sub = commands.add_parser(
+        "inspect", help="Show one trajectory and its latest diagnosis"
+    )
     sub.add_argument("trajectory")
     sub.set_defaults(handler=command_inspect)
 
+    sub = commands.add_parser(
+        "observe", help="Import and show Harbor trial lifecycle events"
+    )
+    sub.add_argument("path", help="Harbor job directory")
+    sub.add_argument("--experiment", required=True)
+    sub.add_argument("--lost-after-seconds", type=int, default=90)
+    sub.add_argument("--output", help="Also write machine-readable JSON status")
+    sub.set_defaults(handler=command_observe)
+
     sub = commands.add_parser("analyze", help="Diagnose failed Harbor trajectories")
     sub.add_argument("--experiment", required=True)
-    sub.add_argument("--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro"))
+    sub.add_argument(
+        "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
+    )
     sub.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
     sub.add_argument("--trajectory", help="Diagnose only this trajectory ID")
     sub.add_argument("--force", action="store_true")

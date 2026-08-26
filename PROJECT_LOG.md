@@ -8,28 +8,28 @@
 
 ## 当前目标
 
-EvalPlant 是 Harbor 运行结果之后的一层离线诊断后台：导入 ATIF 轨迹，先用确定性事实判断 Harness 是否故障，其余失败最多调用一次 LLM Judge，最后保存诊断并做统计。系统只做诊断和统计，不做在线反馈、修复建议执行、插件生成、自动重跑或科研式算法对比。
+EvalPlant 是 Harbor 运行结果之后的一层离线诊断后台：消费任务生命周期事件并导入 ATIF，先用确定性事实判断 Harness 是否有已证实故障，其余失败由受约束 Judge 分析，最后保存诊断并做统计。系统只做诊断和统计，不做在线反馈、修复执行、插件生成或科研式算法对比；任务隔离和自动重试由 Harbor 执行层负责。
 
 当前唯一完整链路是：
 
 ```text
-Harbor / DeepSeek Harness → ATIF → import → analyze → inspect / report
+Harbor / DeepSeek Harness → observe / ATIF import → analyze → inspect / report
 ```
 
 ## 当前实现
 
-- CLI 只保留 `import`、`inspect`、`analyze`、`report`。
+- CLI 为 `observe`、`import`、`inspect`、`analyze`、`report`。
 - Harness 固定为 ETCLOVG 七层；LLM 固定为四类。
 - 硬规则只读取明确结构化事实，不从模型自然语言猜测 Harness 故障。
-- 歧义失败使用完整轨迹进行一次 Judge 调用；超过输入上限不截断、不调用。
-- 一份诊断只有一个主要责任、一个主要类别和一个根因，最多一个次要因素。
+- 歧义失败使用“结构化事实 + 原始证据”的 Judge；短轨迹一次调用，长轨迹使用本地全量索引并最多补证据一次。
+- 一份诊断只有一个主要责任、类别和 first sufficient cause 用于统计，同时可保留最多三个次要因素和完整因果链。
 - LLM 证据必须在真实步骤或日志中逐字存在；虚假证据使诊断失败。
 - 每条轨迹只保留最新诊断，默认不重复调用，`--force` 才覆盖。
 - Judge 故障记录为诊断 `FAILED`，不改写原任务结果。
 
 ## 当前数据
 
-唯一工作库为 `data/evalplant.db`，只有 `experiments`、`trajectories`、`steps`、`diagnoses` 四张表。迁移后保留 2 个 Terminal-Bench 实验、12 条真实轨迹、285 个步骤，旧归因结果已清空。每个字段见 `SQLITE_DATA_DICTIONARY.md`。
+默认工作库为 `data/evalplant.db`，包含 `experiments`、`attempts`、`trajectories`、`steps`、`diagnoses` 五张表。历史本机数据是否存在不作为 Git 交付的一部分；每个字段见 `SQLITE_DATA_DICTIONARY.md`。
 
 ## 2026-08-26：工程诊断机制落地
 
@@ -69,3 +69,13 @@ Harbor 仍作为本地独立工作副本，避免把 1.7GB 上游仓库提交进
 项目早期曾比较 Raw、Graph、G-RAV 和 DeepDebug，并用 Who&When 金标计算定位准确率。少量样本中算法结果波动大、成本不可控，而且偏离工程平台目标，因此停止这条路线；对应实验代码、数据和标注均已从项目清除。
 
 后续每完成一个实际变更，都继续追加到本文件；桌面旧文档不再维护。
+
+## 2026-08-26：诊断规约 v3 与执行可观测性完成
+
+诊断从 v2 升级到 `engineering_diagnosis_v3`。新增 contractual responsibility、first sufficient cause、primary/secondary/failure surface/causal chain/counterfactual、`HARNESS_SUSPECTED` 和长轨迹 `NEED_MORE_EVIDENCE` 内部状态。短轨迹仍是一次 Judge；长轨迹不调用摘要模型，而是由程序为全部步骤建立索引，向 Judge 提供有界分段目录和关键原文，按真实步骤号最多补取一次。Judge thinking 固定关闭、temperature 为 0、输出上限 4096，并保存完整配置哈希。
+
+ATIF 导入改为未知版本 fail-closed，保存 source/canonical/adapter 版本；SQLite schema 升至 4。数据库预览、工具参数和 Judge payload 会脱敏。报告记录配置哈希并在混合诊断配置时警告，同时把错误统计映射为工程整改方向。人工评测工具可计算 coverage、总体与选择性准确率、根因 exact/near、证据人工支持率和重复运行一致率；公开 Tracebench 失败轨迹可由脚本下载到本地，但其源注释不冒充 EvalPlant 金标。
+
+Harbor 第四个补丁加入 trial 生命周期 JSONL 和 30 秒心跳，失败 attempt 在重试前归档而不是删除。Harbor 原生有界并发确保单 trial 异常不终止整个 job，重试配置只允许基础设施或瞬态服务异常。EvalPlant 新增 `attempts` 表和 `observe` 命令，同一逻辑任务可查看多次尝试，运行中超过阈值未收到心跳会显示 `LOST`。状态写盘失败只告警，不反向中断任务；重试归档重名时使用 attempt ID 避免阻断。第四补丁在干净 Harbor 基线上重放通过，tree 指纹为 `bfea9c800c913be0d23225b7f8472a3ac5f06f9e`。
+
+代码自动验收为 EvalPlant 19 项、Harbor 相关 71 项（DSH 适配器 9 项、状态与队列 62 项）。版本升级到 0.4.0。剩余工作只是真实效果验收：输入公开失败轨迹，由独立人工形成 review/gold 后运行评测；在此之前不报告虚构准确率。

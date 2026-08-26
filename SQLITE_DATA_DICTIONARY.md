@@ -1,87 +1,117 @@
 # EvalPlant SQLite 字段说明
 
-工作库是 `data/evalplant.db`。它只有四张表：一次评测批次放在 `experiments`，每个任务运行放在 `trajectories`，轨迹拆出的步骤放在 `steps`，失败诊断放在 `diagnoses`。空值 `NULL` 表示 Harbor 没提供该数据或该字段不适用于当前记录。
+默认工作库是 `data/evalplant.db`，schema 版本为 4，共 5 张业务表。`experiments` 是一次批次，`attempts` 是 Harbor 每次执行尝试，`trajectories` 是每个逻辑任务的最终轨迹，`steps` 是轨迹步骤索引，`diagnoses` 是最新诊断。`NULL` 表示上游未提供或该字段不适用。
 
-SQLite 同目录偶尔出现的 `evalplant.db-wal` 和 `evalplant.db-shm` 是 SQLite 为安全并发读写自动创建的辅助文件，不是多余数据库；程序关闭后可能消失，不应在运行中手动删除。
+同目录的 `-wal` 和 `-shm` 是 SQLite WAL 并发模式的辅助文件，不是多余数据库，运行中不能删除。
 
-## experiments：一次评测批次
+## experiments：评测批次
 
-| 字段 | 大白话含义 |
+| 字段 | 含义 |
 |---|---|
-| `id` | 实验唯一名字，也是其他表关联这次批次的主键。 |
-| `agent_model` | 被评测 Agent 使用的模型；导入时可填写。 |
-| `judge_model` | 最近对该实验执行诊断时使用的 Judge 模型。 |
-| `created_at` | 这条实验记录首次创建的 UTC 时间。 |
+| `id` | 实验唯一名称和主键。 |
+| `agent_model` | 被评测 Agent 的模型。 |
+| `judge_model` | 最近分析该实验时使用的 Judge 模型。 |
+| `created_at` | 首次创建的 UTC 时间。 |
 
-## trajectories：每个任务的一次真实运行
+## attempts：Harbor 的每次执行尝试
 
-| 字段 | 大白话含义 |
+| 字段 | 含义 |
 |---|---|
-| `id` | 这次轨迹的唯一 ID，优先使用 Harbor `result.json` 中的 ID。 |
-| `experiment_id` | 这条轨迹属于哪个实验，对应 `experiments.id`。 |
-| `task_id` | 数据库内用于区分重复运行的任务名，通常是“原任务名::trial 名”。 |
-| `verdict` | 最终结果：`PASS`、`FAIL`、`TIMEOUT`、`INFRA_ERROR`、`UNKNOWN` 或 `INCOMPLETE`。 |
-| `raw_path` | 标准 ATIF `trajectory.json` 的绝对路径。 |
-| `raw_sha256` | ATIF 文件的 SHA-256 指纹，用来发现原文件是否被改过。 |
-| `final_patch_path` | Agent 最终补丁文件的绝对路径；没有补丁时为空。 |
-| `final_log_path` | Verifier 测试日志或 Agent 最终日志的绝对路径；不存在时为空。 |
-| `cost` | Harbor 记录的这次 Agent 运行费用，单位美元；不是诊断费用。 |
-| `api_calls` | Agent 在这次任务中调用模型 API 的次数。 |
-| `base_task_id` | Benchmark 原始任务名，不包含重复运行的 trial 后缀。 |
-| `trial_name` | Harbor 为这一次具体运行分配的 trial 名。 |
-| `health_status` | 运行通道健康状态，通常是 `VALID`、`INFRA_ERROR` 或 `INCOMPLETE`；它和任务做对做错是两件事。 |
-| `reward` | Verifier 奖励，多项奖励存在时保存其平均值。 |
-| `raw_event_path` | DeepSeek Harness 原始 `session.jsonl` 路径；没有时为空。 |
-| `raw_event_sha256` | 原始事件文件指纹；没有原始事件时为空。 |
-| `agent_version` | 实际运行的 Agent/Harness 版本。 |
-| `model_name` | 实际运行任务的模型名称。 |
-| `started_at` | Harbor 记录的任务开始时间。 |
-| `finished_at` | Harbor 记录的任务结束时间。 |
-| `input_tokens` | Agent 运行消耗的输入 token。 |
-| `cache_tokens` | Agent 运行命中的缓存 token。 |
-| `output_tokens` | Agent 运行产生的输出 token。 |
-| `environment_setup_seconds` | Harbor 准备容器环境花费的秒数。 |
-| `agent_setup_seconds` | 准备 Agent 花费的秒数。 |
-| `agent_execution_seconds` | Agent 真正执行任务花费的秒数。 |
-| `verifier_seconds` | Verifier 测试和判分花费的秒数。 |
+| `id` | 实验 ID 与 Harbor trial ID 组合生成的稳定主键。 |
+| `experiment_id` | 所属实验。 |
+| `job_id` | Harbor job UUID。 |
+| `trial_id` | 本次 attempt 的 Harbor UUID；重试会生成新 UUID。 |
+| `trial_name` | 多次 attempt 共享的逻辑 trial 名。 |
+| `task_name` | Benchmark 原始任务名。 |
+| `attempt_number` | 同一 `trial_name` 的第几次尝试，从 1 开始。 |
+| `state` | 最近状态：`RUNNING/SUCCEEDED/FAILED/CANCELLED/TIMEOUT/INFRA_ERROR`；`LOST` 是查询时按心跳动态推导，不写死在库中。 |
+| `phase` | 最近生命周期事件，例如 `agent-start`、`verification-start`、`heartbeat` 或 `end`。 |
+| `retryable` | 这次异常是否命中 Harbor 的重试白名单，SQLite 中 1 为是、0 为否。 |
+| `exception_type` | 异常类名；没有异常时为空。 |
+| `exception_message` | 脱敏后的异常说明；当前 Harbor 状态流为避免泄密默认不写正文。 |
+| `started_at` | 第一次 START 事件时间。 |
+| `updated_at` | 最近事件或心跳时间。 |
+| `finished_at` | END/CANCEL 时间，运行中为空。 |
+| `event_count` | 已消费的该 attempt 生命周期事件数。 |
 
-## steps：ATIF 轨迹中的步骤索引
+## trajectories：逻辑任务的最终运行轨迹
 
-| 字段 | 大白话含义 |
+| 字段 | 含义 |
 |---|---|
-| `trajectory_id` | 这一步属于哪条轨迹，对应 `trajectories.id`。 |
-| `step_index` | ATIF 中的真实步骤编号；诊断引用根因时使用它。 |
-| `role` | 这一步是谁产生的，例如 user、agent 或 tool。 |
-| `action_type` | 系统整理出的动作类型，例如推理、读文件、改文件、执行测试或工具错误；用于展示和统计，不直接决定责任。 |
-| `content_preview` | 这一步的可读内容，数据库最多保留 12000 个字符；Judge 读取的是原始 ATIF，不依赖这个预览。 |
-| `command` | 这一步执行的 shell 命令；没有命令时为空。 |
-| `test_status` | 若这一步是测试，记录 passed、failed 或 unknown；其他步骤为空。 |
-| `tool_name` | ATIF 中调用的工具名；没有工具调用时为空。 |
-| `tool_arguments` | 工具参数的 JSON 文本；没有参数时通常是 `null`。 |
+| `id` | 轨迹唯一 ID，优先使用 Harbor result ID。 |
+| `experiment_id` | 所属实验。 |
+| `task_id` | 实验内唯一存储名，通常为“任务名::trial 名”。 |
+| `verdict` | `PASS/FAIL/TIMEOUT/INFRA_ERROR/UNKNOWN/INCOMPLETE`。 |
+| `raw_path` | 原始 ATIF 文件绝对路径；数据库不复制原始敏感内容。 |
+| `raw_sha256` | 原始 ATIF 的 SHA-256，用来发现文件变化。 |
+| `final_patch_path` | Agent 最终补丁路径。 |
+| `final_log_path` | Verifier 或 Agent 最终日志路径。 |
+| `cost` | Agent 运行费用（美元），不是 Judge 费用。 |
+| `api_calls` | Agent 模型 API 调用数。 |
+| `base_task_id` | Benchmark 原始任务名。 |
+| `trial_name` | Harbor 逻辑 trial 名。 |
+| `health_status` | 执行通道状态 `VALID/INFRA_ERROR/INCOMPLETE`，与任务做对做错分开。 |
+| `reward` | Verifier 奖励，多奖励时保存平均值。 |
+| `raw_event_path` | DSH 原始 session JSONL 路径。 |
+| `raw_event_sha256` | 原始 session 文件指纹。 |
+| `agent_version` | Agent/Harness 实际版本。 |
+| `model_name` | 运行任务的实际模型。 |
+| `started_at` | Harbor 记录的开始时间。 |
+| `finished_at` | Harbor 记录的结束时间。 |
+| `input_tokens` | Agent 输入 token。 |
+| `cache_tokens` | Agent 命中缓存 token。 |
+| `output_tokens` | Agent 输出 token。 |
+| `environment_setup_seconds` | 容器环境准备秒数。 |
+| `agent_setup_seconds` | Agent 准备秒数。 |
+| `agent_execution_seconds` | Agent 执行秒数。 |
+| `verifier_seconds` | Verifier 执行秒数。 |
+| `source_schema_version` | 原轨迹 ATIF 版本；旧格式记 `legacy`。 |
+| `canonical_schema_version` | EvalPlant 内部统一 schema 版本。 |
+| `adapter_version` | 本次上游到 canonical 的转换器版本。 |
 
-## diagnoses：每条失败轨迹的最新诊断
+## steps：脱敏后的轨迹步骤索引
 
-| 字段 | 大白话含义 |
+| 字段 | 含义 |
 |---|---|
-| `trajectory_id` | 被诊断的轨迹 ID，也是本表主键，所以一条轨迹只保留最新诊断。 |
-| `status` | `ATTRIBUTED` 已归因、`UNDETERMINED` 证据不足、`INPUT_TOO_LARGE` 完整输入超限、`FAILED` 诊断过程失败。 |
-| `responsibility` | 主要责任域，只能是 `HARNESS` 或 `LLM`；没法归因时为空。 |
-| `category_code` | 稳定错误代码：Harness 为 `H-E/H-T/H-C/H-L/H-O/H-V/H-G`，LLM 为 `L1/L2/L3/L4`。 |
-| `category_name` | 错误代码对应的中文名称，方便人阅读。 |
-| `root_cause_step` | LLM 根因所在的真实 ATIF 步骤编号；Harness 组件故障或无法确定时可以为空。 |
-| `component` | Harness 出错组件名，或 Judge 能明确指出的相关组件；不明确时为空。 |
-| `summary` | 一句话中文根因结论。 |
-| `confidence` | `HIGH`、`MEDIUM` 或 `LOW`；诊断没完成时为空。 |
-| `decision_source` | 结论来自确定性 `RULE` 还是一次 `LLM` Judge。 |
-| `matched_rule` | 命中的确定性规则名；LLM 结论时为空。 |
-| `judge_model` | 实际调用的 Judge 模型；纯规则结论和未调用模型时为空。 |
-| `prompt_version` | 实际使用的诊断 Prompt 协议版本，用来防止只换目录却误以为升级。 |
-| `judge_input_tokens` | 本次 Judge 实际输入 token；没调用时为 0。 |
-| `judge_output_tokens` | 本次 Judge 实际输出 token；没调用时为 0。 |
-| `judge_latency_seconds` | 本次 Judge 请求耗时秒数；没调用时为 0。 |
-| `judge_thinking` | 实际配置的思考模式；当前 LLM 调用固定为 `disabled`，未调用时是 `not_called`。 |
-| `judge_max_input_tokens` | 本次诊断允许的完整输入 token 上限。 |
-| `judge_max_output_tokens` | 本次 Judge 的输出 token 上限；未调用时为 0。 |
-| `diagnosis_error` | Judge 请求、JSON 解析或证据校验失败的具体错误；正常诊断为空。 |
-| `report_json` | 完整诊断 JSON，包含证据原文、因果链、最多一个次要因素、运行事实和输入上限等细节。 |
-| `created_at` | 这份最新诊断保存到数据库的 UTC 时间。 |
+| `trajectory_id` | 所属轨迹。 |
+| `step_index` | 原始真实步骤编号。 |
+| `role` | 产生者，如 user、agent、tool。 |
+| `action_type` | 推理、读写文件、测试、工具错误等导航类型；不直接决定责任。 |
+| `content_preview` | 脱敏后的内容预览，最多 12000 字符；Judge 仍从原轨迹构建脱敏输入。 |
+| `command` | 脱敏后的 shell 命令。 |
+| `test_status` | `passed/failed/unknown`，非测试步骤为空。 |
+| `tool_name` | 工具名。 |
+| `tool_arguments` | 脱敏后的工具参数 JSON。 |
+
+## diagnoses：每条轨迹的最新诊断
+
+| 字段 | 含义 |
+|---|---|
+| `trajectory_id` | 被诊断轨迹，也是主键，所以默认只保留最新诊断。 |
+| `status` | `ATTRIBUTED/HARNESS_SUSPECTED/UNDETERMINED/INPUT_TOO_LARGE/FAILED`。 |
+| `responsibility` | 已确认的主要责任 `HARNESS/LLM`；拒答或怀疑时为空。 |
+| `category_code` | Harness `H-E/H-T/H-C/H-L/H-O/H-V/H-G` 或 LLM `L1/L2/L3/L4`。 |
+| `category_name` | 类别中文名。 |
+| `root_cause_step` | first sufficient cause 对应的真实步骤编号。 |
+| `component` | 出错组件，无法确认时为空。 |
+| `summary` | 一句话诊断或拒答原因。 |
+| `confidence` | `HIGH/MEDIUM/LOW`。 |
+| `decision_source` | `RULE` 或 `LLM`。 |
+| `matched_rule` | 确定性规则名；LLM 诊断为空。 |
+| `judge_model` | 实际 Judge 模型。 |
+| `prompt_version` | 实际诊断 Prompt 版本，当前为 `engineering_diagnosis_v3`。 |
+| `judge_input_tokens` | 全部 Judge 调用输入 token 总和。 |
+| `judge_output_tokens` | 全部 Judge 调用输出 token 总和。 |
+| `judge_latency_seconds` | 全部 Judge 调用耗时总和。 |
+| `judge_thinking` | 当前固定 `disabled`；未调用为 `not_called`。 |
+| `judge_max_input_tokens` | 本次输入预算。 |
+| `judge_max_output_tokens` | 本次输出上限。 |
+| `diagnosis_error` | 调用、解析或校验失败原因。 |
+| `rule_version` | 确定性规则版本。 |
+| `diagnosis_config_hash` | 模型、Prompt、规则、schema、thinking、temperature 和 token 上限的组合指纹。 |
+| `judge_temperature` | 实际 temperature，当前为 0。 |
+| `judge_call_count` | Judge 调用次数：规则为 0，短轨迹通常 1，长轨迹最多 2。 |
+| `trajectory_mode` | `RULE/FULL/HIERARCHICAL`。 |
+| `evidence_validation_level` | `PROVENANCE_AND_CONTRACT`、`PROVENANCE_AND_REPORT_STRUCTURE` 或 `NOT_APPLICABLE`，不会冒充语义因果已被程序证明。 |
+| `report_json` | 完整 JSON，含 primary、secondary、causal chain、failure surface、证据、反事实、版本和运行事实。 |
+| `created_at` | 保存诊断的 UTC 时间。 |
