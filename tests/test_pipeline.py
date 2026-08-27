@@ -746,6 +746,34 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("swe-bench", stats["by_dataset"])
             connection.close()
 
+    def test_harbor_registry_source_becomes_dataset_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = harbor_trial(
+                root / "job",
+                "kv-store-grpc__trial",
+                "kv-store-grpc",
+                reward=1.0,
+                trajectory_id="registry-source-1",
+            )
+            result_path = raw.parent.parent / "result.json"
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["config"] = {"task": {"source": "terminal-bench@2.0"}}
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, root / "job", "registry-source")[0]
+            row = connection.execute(
+                "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
+            ).fetchone()
+            self.assertEqual(row["source_dataset"], "terminal-bench@2.0")
+            self.assertEqual(row["source_instance_id"], "kv-store-grpc")
+            self.assertEqual(
+                report(connection, "registry-source")["by_dataset"]
+                ["terminal-bench@2.0"]["passed"],
+                1,
+            )
+            connection.close()
+
     def test_run_watches_live_job_and_diagnoses_new_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

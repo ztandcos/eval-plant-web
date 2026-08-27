@@ -670,10 +670,14 @@ def _bench_identity(
     extra = _mapping(data.get("extra"))
     result_extra = _mapping(result.get("extra"))
     source = _mapping(data.get("source"))
+    result_config = _mapping(result.get("config"))
+    result_task = _mapping(result_config.get("task"))
     dataset = _first_text(
         extra.get("source_dataset"),
         result_extra.get("source_dataset"),
         source.get("dataset"),
+        result.get("source"),
+        result_task.get("source"),
     )
     instance = _first_text(
         extra.get("source_instance_id"),

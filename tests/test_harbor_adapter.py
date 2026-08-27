@@ -110,7 +110,7 @@ class HarborAdapterTest(unittest.TestCase):
             with patch.dict(os.environ, {"EVALPLANT_HARBOR": str(binary)}):
                 self.assertEqual(find_harbor_binary(), binary)
 
-    def test_find_harbor_prefers_patched_local_checkout(self):
+    def test_find_harbor_prefers_bundled_fork(self):
         with tempfile.TemporaryDirectory() as temp:
             local = Path(temp) / "local-harbor"
             local.write_text("", encoding="utf-8")

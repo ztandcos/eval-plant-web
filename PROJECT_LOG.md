@@ -8,17 +8,17 @@
 
 ## 当前目标
 
-EvalPlant 是 Harbor 运行结果之后的一层 Outcome-first 离线评测与诊断后台：消费任务生命周期事件、ATIF、Verifier Outcome 和 Checks，统计 Task/Trial 结果并比较 Agent 版本，再对失败轨迹执行受约束诊断。系统不做在线反馈、修复执行、插件生成或科研式算法对比；任务隔离和自动重试由 Harbor 执行层负责。
+EvalPlant 是 Coding Agent 的 Outcome-first 离线评测与诊断后台。用户通过一条 `evalplant bench` 命令选择 Agent、Bench、Task 和 Sandbox；仓库内固定 Harbor fork 负责执行，EvalPlant 消费任务生命周期事件、ATIF、Verifier Outcome 和 Checks，统计 Task/Trial 结果并比较 Agent 版本，再对失败轨迹执行受约束诊断。系统不做在线反馈、修复执行、插件生成或科研式算法对比；任务隔离和自动重试由 Harbor 执行层负责。
 
 当前唯一完整链路是：
 
 ```text
-Harbor / DeepSeek Harness → observe / import → outcome checks / compare → analyze → inspect / report
+Agent × Bench × Sandbox → evalplant bench → 内置 Harbor / DSH → Verifier → 失败即时归因 → SQLite / report / compare
 ```
 
 ## 当前实现
 
-- CLI 为 `observe`、`import`、`inspect`、`analyze`、`report`。
+- 主 CLI 为 `bench`；`run`、`diagnose`、`observe`、`import`、`inspect`、`analyze`、`report`、`compare` 用于已有作业复盘和排障。
 - Harness 固定为 ETCLOVG 七层；LLM 固定为四类。
 - 硬规则只读取明确结构化事实，不从模型自然语言猜测 Harness 故障。
 - 歧义失败使用“结构化事实 + 原始证据”的 Judge；短轨迹一次调用，长轨迹使用本地全量索引并最多补证据一次。
@@ -29,7 +29,7 @@ Harbor / DeepSeek Harness → observe / import → outcome checks / compare → 
 
 ## 当前数据
 
-默认工作库为 `data/evalplant.db`，包含 `experiments`、`attempts`、`trajectories`、`steps`、`diagnoses` 五张表。历史本机数据是否存在不作为 Git 交付的一部分；每个字段见 `SQLITE_DATA_DICTIONARY.md`。
+默认工作库为 `data/evalplant.db`，包含 `experiments`、`attempts`、`tasks`、`trajectories`、`outcomes`、`checks`、`steps`、`diagnoses` 八张业务表。历史本机数据是否存在不作为 Git 交付的一部分；每个字段见 `SQLITE_DATA_DICTIONARY.md`。
 
 ## 2026-08-26：工程诊断机制落地
 
@@ -54,7 +54,7 @@ Harbor / DeepSeek Harness → observe / import → outcome checks / compare → 
 
 Prompt 正式升级为 `engineering_diagnosis_v2`。新规约明确：执行型任务的最终完成声明通常是状态描述而非根因；最后一次 Agent 观察与 Verifier 矛盾且缺少中间生命周期证据时应返回 `UNDETERMINED`。历史真实诊断继续保留其实际使用的 v1 版本，不伪装成 v2 结果。
 
-Harbor 仍作为本地独立工作副本，避免把 1.7GB 上游仓库提交进 EvalPlant；三笔 `dsh-minimal` 定制提交已导出到 `integrations/harbor-patches`。在临时干净 Harbor 基线重新应用后，Git tree 与本机一致，适配器 9 项测试全部通过。
+当时 Harbor 还是本地独立工作副本，为避免把包含虚拟环境的 1.7GB 工作目录提交进 EvalPlant，三笔 `dsh-minimal` 定制曾导出到 `integrations/harbor-patches`。该过渡方案已在 2026-08-27 的根仓合并中退出，历史记录保留用于解释演进过程。
 
 新增 `DELIVERY.md` 作为实习答辩与移交说明。EvalPlant 当前自动测试 12 项，覆盖演示样本、数据库、导入、诊断边界、一次 Judge、证据校验、成本保护和报告导出。
 
@@ -98,4 +98,12 @@ SQLite schema 升至 6，在现有 `trajectories=Trial` 和 `base_task_id=Task` 
 
 ## 2026-08-27：Harbor 内部化，bench 成为主命令
 
-Harbor 作为项目内部执行引擎保留，但不向用户暴露 Harbor CLI。`evalplant bench` 用 `--agent` / `--bench` / `--task` / `--sandbox` / `--k` / `--concurrency` 生成 JobConfig，优先使用项目内已打补丁的 Harbor，密钥只以 `${ENV}` 模板传递。命令持续消费 Trial 生命周期事件；每个 Verifier 失败结果落盘后立即导入和归因，全部 Trial 结束后输出统一报告。对于只产生 `result.json`、没有 ATIF 的 Agent，系统仍保存 Outcome/Check；失败时返回 `UNDETERMINED / trajectory_unavailable`，不把缺失轨迹冒充诊断服务异常。原有 `run` / `import` / `observe` 等命令继续用于已有轨迹和排障。EvalPlant 自动测试增至 34 项。
+Harbor 作为项目内部执行引擎保留，但不向用户暴露 Harbor CLI。`evalplant bench` 用 `--agent` / `--bench` / `--task` / `--sandbox` / `--k` / `--concurrency` 生成 JobConfig，优先使用项目内定制 Harbor（现已成为固定 fork），密钥只以 `${ENV}` 模板传递。命令持续消费 Trial 生命周期事件；每个 Verifier 失败结果落盘后立即导入和归因，全部 Trial 结束后输出统一报告。对于只产生 `result.json`、没有 ATIF 的 Agent，系统仍保存 Outcome/Check；失败时返回 `UNDETERMINED / trajectory_unavailable`，不把缺失轨迹冒充诊断服务异常。原有 `run` / `import` / `observe` 等命令继续用于已有轨迹和排障。EvalPlant 自动测试增至 35 项。
+
+## 2026-08-27：Harbor fork 合并进根仓库
+
+把固定 Harbor 源码直接纳入 EvalPlant 根 Git 历史，删除 Harbor 内层 `.git` 和 `integrations/harbor-patches`。DSH 适配、凭据安全传递、Trial 生命周期事件和基础设施重试现在作为普通源码统一维护，不再需要人工重放补丁。`harbor/.venv`、Job、下载任务和缓存继续忽略，实际提交源码约 47 MB，不包含本机 1.7 GB 虚拟环境。
+
+新增 `COMMAND_GUIDE.md`，以 Terminal-Bench 2.0 的真实 `kv-store-grpc` 任务说明一次性安装、一命令运行、全部 CLI 参数、每类输出和常见故障。正常运行只暴露 `evalplant bench`，Harbor CLI 仅作为内部实现和开发排障工具。
+
+同一主命令完成 `terminal-bench@2.0/kv-store-grpc` 官方 Oracle 真实验收：1 Task、1 Trial、reward 1.0、Verifier PASS、Judge 0 次，总作业约 45 秒。第一次验收在带 SOCKS 代理的终端发现 Harbor 精简运行环境缺少 `socksio`，已补入核心依赖和锁文件；同时让 importer 从 Harbor `config.task.source` 保留 `terminal-bench@2.0` 数据集身份，并新增回归测试。最终 EvalPlant 35 项、Harbor 71 项全部通过。

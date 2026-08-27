@@ -1,8 +1,4 @@
-"""Drive Harbor as an installed tool, not a nested project.
-
-EvalPlant owns agent / bench / sandbox aliases and writes a Harbor JobConfig
-JSON. The optional local ``harbor/`` checkout is only for patch development.
-"""
+"""Drive the Harbor fork bundled inside the EvalPlant repository."""
 
 from __future__ import annotations
 
@@ -219,9 +215,9 @@ def find_harbor_binary() -> Path:
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(
-        "Harbor is not installed. Install the harbor package, put `harbor` on PATH, "
-        "or set EVALPLANT_HARBOR to the binary. The local harbor/ checkout is optional "
-        "and only used to develop integrations/harbor-patches."
+        "The bundled Harbor environment is not installed. Run `uv sync --project "
+        "harbor`, put another compatible `harbor` on PATH, or set "
+        "EVALPLANT_HARBOR to its binary."
     )
 
 

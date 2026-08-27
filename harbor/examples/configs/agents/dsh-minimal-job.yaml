@@ -1,0 +1,30 @@
+jobs_dir: jobs
+n_attempts: 1
+n_concurrent_trials: 4
+timeout_multiplier: 1.0
+retry:
+  max_retries: 2
+  include_exceptions:
+    - EnvironmentStartTimeoutError
+    - HealthcheckError
+    - SandboxBuildFailedError
+    - NetworkConnectionError
+    - ApiInternalServerError
+    - ApiOverloadedError
+    - ApiConnectionClosedError
+    - ApiResponseStalledError
+environment:
+  type: docker
+  force_build: false
+  delete: true
+  env:
+    - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+agents:
+  - name: dsh-minimal
+    model_name: deepseek/deepseek-v4-flash
+    kwargs:
+      version: 0.1.0rc7
+datasets:
+  - path: examples/tasks
+    task_names:
+      - hello-world

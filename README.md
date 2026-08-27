@@ -51,23 +51,24 @@ evalplant/
 │   ├── judge.py
 │   ├── metrics.py
 │   └── evaluation.py
-├── integrations/harbor-patches/
-├── harbor/                         # 内部执行引擎，已应用 4 个补丁，gitignored
+├── harbor/                         # 固定内置 Harbor fork，与项目共用 Git 历史
 ├── scripts/
 ├── reports/
 ├── examples/demo-job/
 ├── tests/
+├── COMMAND_GUIDE.md                # 从安装到所有命令的中文实操手册
 └── PROJECT_LOG.md
 ```
 
 ## 完整运行
 
-当前 `dsh-minimal` 依赖四个 Harbor 补丁。EvalPlant 会优先使用项目内已打补丁的 `harbor/.venv/bin/harbor`；也可用 `EVALPLANT_HARBOR` 显式指定另一个已打补丁二进制，最后才使用 PATH 上的 Harbor。
+Harbor 已作为固定 fork 直接纳入当前仓库，不再使用嵌套 Git 或补丁文件。EvalPlant 会自动使用 `harbor/.venv/bin/harbor`，正常用户不需要执行 Harbor 命令。
 
 ```bash
 cd /Users/shaw/eval-plant
-uv sync
-# 可选：export EVALPLANT_HARBOR=/path/to/patched/harbor
+uv python install 3.12
+uv sync --python 3.12
+uv sync --project harbor --python 3.12 --no-dev
 ```
 
 主命令只描述评测矩阵：
@@ -75,13 +76,15 @@ uv sync
 ```bash
 uv run evalplant bench \
   --agent dsh \
-  --bench terminal-bench \
+  --bench terminal-bench@2.0 \
+  --task kv-store-grpc \
   --sandbox docker \
-  --k 3 \
-  --concurrency 4
+  --k 1 \
+  --concurrency 1 \
+  --experiment tbench-kv-store-grpc-dsh
 ```
 
-重复 `--agent` / `--bench` 可做矩阵。本地题集传目录，远程题集传数据集名。`--print-config` 只生成 Job JSON；`--list` 查看别名。Harbor 在内部为每个 Trial 运行 Verifier；失败结果一落盘就进入归因，整批结束后同一条命令输出总报告。没有 ATIF 的 Agent 仍保存 Outcome 和 Check，失败时明确标记 `UNDETERMINED / trajectory_unavailable`，不会伪造根因。
+重复 `--agent` / `--bench` 可做矩阵。本地题集传目录，远程题集传数据集名。`--print-config` 只生成 Job JSON；`--list` 查看别名。Harbor 在内部为每个 Trial 运行 Verifier；失败结果一落盘就进入归因，整批结束后同一条命令输出总报告。没有 ATIF 的 Agent 仍保存 Outcome 和 Check，失败时明确标记 `UNDETERMINED / trajectory_unavailable`，不会伪造根因。安装、真实 Terminal-Bench 示例、每个命令与全部参数见 [COMMAND_GUIDE.md](COMMAND_GUIDE.md)。
 
 无 Key 离线演示：
 
@@ -131,4 +134,4 @@ uv run python -m evalplant.evaluation \
 uv run python -m unittest discover -s tests -v
 ```
 
-EvalPlant 自动测试覆盖 bench 配置生成、实时失败归因、Outcome-only Agent 和最终报告；Harbor 补丁测试验证 DSH 适配、状态事件与隔离重试。公开 RootSE 的 102 条人工标注失败轨迹已完成真实验收：系统链路可运行、可审计，但最早根因步骤精确命中仅 16/102，因此不宣称高准确率。脱敏结果见 `reports/`。
+EvalPlant 自动测试覆盖 bench 配置生成、实时失败归因、Outcome-only Agent 和最终报告；内置 Harbor 测试验证 DSH 适配、状态事件与隔离重试。公开 RootSE 的 102 条人工标注失败轨迹已完成真实验收：系统链路可运行、可审计，但最早根因步骤精确命中仅 16/102，因此不宣称高准确率。脱敏结果见 `reports/`。

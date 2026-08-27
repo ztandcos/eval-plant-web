@@ -35,8 +35,8 @@ Harness precision-first rules
 
 | 能力 | 实现状态 | 可核验证据 |
 |---|---|---|
-| DeepSeek Harness 接入 Harbor | 已实现 | 4 个可重放补丁；适配器保留模型、版本、token、成本和 ATIF 事件 |
-| 一键 bench（不暴露 Harbor CLI） | 已实现 | `evalplant bench --agent --bench --task --sandbox` 内部启动已打补丁 Harbor；每个失败 Trial 验证完成后立即归因，整批结束输出统一报告 |
+| DeepSeek Harness 接入 Harbor | 已实现 | 固定 Harbor fork 已纳入同一 Git 仓库；适配器保留模型、版本、token、成本和 ATIF 事件 |
+| 一键 bench（不暴露 Harbor CLI） | 已实现 | `evalplant bench --agent --bench --task --sandbox` 内部启动内置 Harbor；每个失败 Trial 验证完成后立即归因，整批结束输出统一报告 |
 | Outcome-first 评测 | 已实现 | Harbor reward 和显式 checks 自动进入 Task/Trial/Outcome/Check；报告任务成功率、Trial 通过率和加权 Check 通过率 |
 | Agent 版本比较 | 已实现 | 共有 Task 的 k 次 Trial 配对计算 pass@k、pass^k、成本、延迟、改进/回归和 Ship Gate |
 | 任务隔离与自动重试 | 已实现 | Harbor 原生 semaphore + retry；重试只作用于失败 trial，旧 attempt 移入 `_retries` |
@@ -51,7 +51,11 @@ Harness precision-first rules
 | 诊断可信度评测设施 | 已实现并完成 RootSE 验收 | `evaluation.py` 计算 coverage、总体/选择性准确率、根因 exact/near、证据支持率和重复运行一致率 |
 | 工程决策统计 | 已实现 | 按模型、Agent 版本、责任、类别、组件、token、成本、耗时统计，并把 H/L 分类映射到整改方向 |
 
-当前自动验证结果是 EvalPlant 34 项通过，Harbor 相关 71 项通过，其中 DSH 适配器 9 项、任务状态与队列 62 项。Harbor 四个补丁已在干净基线 `b37833221e27435a18d7acdd41d875cdc2831893` 上重新应用，恢复 tree 指纹为 `bfea9c800c913be0d23225b7f8472a3ac5f06f9e`。
+当前自动验证结果是 EvalPlant 35 项通过，Harbor 相关 71 项通过，其中 DSH 适配器 9 项、任务状态与队列 62 项。Harbor 固定 fork 的上游基线为 `b37833221e27435a18d7acdd41d875cdc2831893`，原集成状态为 `ba962f4b59f4b0617b42f3e84049c0fdf6c607fd`；源码现与 EvalPlant 一起提交、测试和发布，不再依赖补丁重放。
+
+真实链路验收使用 `evalplant bench` 运行 `terminal-bench@2.0/kv-store-grpc` 的官方 Oracle：1 Task、1 Trial、reward 1.0、Verifier PASS、0 次 Judge 调用，总作业约 45 秒。验收过程中发现并修复了 SOCKS 代理环境缺少 `socksio` 的精简安装问题，也补齐了 Harbor registry source 到 EvalPlant dataset identity 的导入。
+
+完整安装、真实 Terminal-Bench 任务和所有 CLI 参数见 `COMMAND_GUIDE.md`。
 
 ## 真实效果验收与诚实边界
 
