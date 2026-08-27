@@ -1,0 +1,35 @@
+{
+  "dataset": "20 fixed RootSE cases",
+  "sample": {
+    "seed": 20260827,
+    "previous_exact_hits": 5,
+    "previous_later_misses": 10,
+    "previous_validator_rejections": 5
+  },
+  "non_thinking": {
+    "attributed": 15,
+    "rejected": 5,
+    "exact_hits": 5,
+    "near_hits": 7,
+    "coverage": 0.75,
+    "accepted_output_tokens": 15728,
+    "accepted_median_latency_seconds": 6.1
+  },
+  "thinking_high": {
+    "attributed": 6,
+    "rejected": 14,
+    "exact_hits": 2,
+    "near_hits": 3,
+    "coverage": 0.3,
+    "accepted_output_tokens": 58433,
+    "accepted_median_latency_seconds": 82.7
+  },
+  "paired_transitions": {
+    "attributed_to_attributed": 6,
+    "attributed_to_rejected": 9,
+    "rejected_to_attributed": 0,
+    "rejected_to_rejected": 5
+  },
+  "conclusion": "Keep high thinking disabled for the current single-call diagnosis prompt.",
+  "measurement_limit": "Rejected calls do not persist token usage or latency, so recorded token and latency totals include accepted diagnoses only."
+}

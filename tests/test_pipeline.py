@@ -1,11 +1,16 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from evalplant.cli import command_report, parser
+from rich.console import Console
+
+from evalplant import cli
+from evalplant.cli import command_inspect, command_report, main, parser, run_pipeline
 from evalplant.core import build_segment_index, build_structured_index, estimate_tokens
 from evalplant.db import (
     connect,
@@ -16,15 +21,24 @@ from evalplant.db import (
 )
 from evalplant.evaluation import evaluate, stability
 from evalplant.judge import analyze_trajectory
-from evalplant.metrics import report
+from evalplant.metrics import compare_experiments, report
 
 
-def harbor_run(root: Path, *, completed_tool=True, reward=0.0) -> Path:
-    trial = root / "job" / "task__trial"
+def harbor_trial(
+    job: Path,
+    trial_name: str,
+    task_name: str,
+    *,
+    completed_tool=True,
+    reward=0.0,
+    trajectory_id=None,
+    agent_name="dsh",
+) -> Path:
+    trial = job / trial_name
     agent = trial / "agent"
     verifier = trial / "verifier"
-    agent.mkdir(parents=True)
-    verifier.mkdir()
+    agent.mkdir(parents=True, exist_ok=True)
+    verifier.mkdir(exist_ok=True)
     steps = [
         {"step_id": 1, "source": "user", "message": "Fix the service"},
         {
@@ -59,7 +73,7 @@ def harbor_run(root: Path, *, completed_tool=True, reward=0.0) -> Path:
                 "schema_version": "ATIF-v1.7",
                 "session_id": "session-1",
                 "agent": {
-                    "name": "dsh",
+                    "name": agent_name,
                     "version": "0.1",
                     "model_name": "deepseek",
                 },
@@ -71,10 +85,11 @@ def harbor_run(root: Path, *, completed_tool=True, reward=0.0) -> Path:
     (trial / "result.json").write_text(
         json.dumps(
             {
-                "id": "trajectory-1",
-                "task_name": "terminal-bench/task",
-                "trial_name": "task__trial",
+                "id": trajectory_id or trial_name,
+                "task_name": task_name,
+                "trial_name": trial_name,
                 "agent_info": {
+                    "name": agent_name,
                     "version": "0.1",
                     "model_info": {"name": "deepseek"},
                 },
@@ -92,6 +107,17 @@ def harbor_run(root: Path, *, completed_tool=True, reward=0.0) -> Path:
     )
     (verifier / "test-stdout.txt").write_text("1 test failed", encoding="utf-8")
     return raw_path
+
+
+def harbor_run(root: Path, *, completed_tool=True, reward=0.0) -> Path:
+    return harbor_trial(
+        root / "job",
+        "task__trial",
+        "terminal-bench/task",
+        completed_tool=completed_tool,
+        reward=reward,
+        trajectory_id="trajectory-1",
+    )
 
 
 def mock_client(payload):
@@ -167,7 +193,7 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(result["matched_rule"], "missing_tool_result")
             connection.close()
 
-    def test_database_has_five_tables(self):
+    def test_database_has_evaluation_tables(self):
         with tempfile.TemporaryDirectory() as temp:
             connection = connect(Path(temp) / "evalplant.db")
             tables = {
@@ -178,7 +204,16 @@ class PipelineTest(unittest.TestCase):
             }
             self.assertEqual(
                 tables,
-                {"experiments", "trajectories", "steps", "diagnoses", "attempts"},
+                {
+                    "experiments",
+                    "tasks",
+                    "attempts",
+                    "trajectories",
+                    "outcomes",
+                    "checks",
+                    "steps",
+                    "diagnoses",
+                },
             )
             connection.close()
 
@@ -199,6 +234,12 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 3
             )
+            outcome = connection.execute("SELECT * FROM outcomes").fetchone()
+            check = connection.execute("SELECT * FROM checks").fetchone()
+            self.assertEqual(outcome["task_key"], "terminal-bench/task")
+            self.assertEqual(outcome["status"], "FAIL")
+            self.assertEqual(check["name"], "reward:task")
+            self.assertEqual(check["status"], "FAIL")
 
             second_id = import_run(connection, root / "job", "smoke-2")[0]
             self.assertNotEqual(second_id, trajectory_id)
@@ -206,6 +247,45 @@ class PipelineTest(unittest.TestCase):
                 connection.execute("SELECT COUNT(*) FROM trajectories").fetchone()[0],
                 2,
             )
+            connection.close()
+            connection = connect(root / "evalplant.db")
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM checks WHERE trajectory_id=?",
+                    (trajectory_id,),
+                ).fetchone()[0],
+                1,
+            )
+            connection.close()
+
+    def test_explicit_verifier_checks_are_validated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw_path = harbor_run(root)
+            result_path = raw_path.parent.parent / "result.json"
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+            payload["verifier_result"] = {
+                "checks": [
+                    {
+                        "name": "file-created",
+                        "kind": "CODE",
+                        "status": "PASS",
+                        "evidence": "workspace/config.ini exists",
+                    }
+                ]
+            }
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, root / "job", "checks")[0]
+            outcome = connection.execute(
+                "SELECT status FROM outcomes WHERE trajectory_id=?", (trajectory_id,)
+            ).fetchone()
+            check = connection.execute(
+                "SELECT * FROM checks WHERE trajectory_id=?", (trajectory_id,)
+            ).fetchone()
+            self.assertEqual(outcome["status"], "PASS")
+            self.assertEqual(check["name"], "file-created")
+            self.assertEqual(check["status"], "PASS")
             connection.close()
 
     def test_missing_tool_result_is_harness_rule(self):
@@ -368,6 +448,8 @@ class PipelineTest(unittest.TestCase):
             save_diagnosis(connection, trajectory_id, diagnosis)
             result = report(connection, "smoke")
             self.assertEqual(result["failed_tasks"], 1)
+            self.assertEqual(result["total_trials"], 1)
+            self.assertEqual(result["weighted_check_pass_rate"], 0.0)
             self.assertEqual(result["diagnosis_statuses"], {"INPUT_TOO_LARGE": 1})
             self.assertEqual(result["average_input_tokens"], 100.0)
             output = root / "report.json"
@@ -466,8 +548,269 @@ class PipelineTest(unittest.TestCase):
             if getattr(action, "choices", None)
         )
         self.assertEqual(
-            set(choices), {"import", "inspect", "observe", "analyze", "report"}
+            set(choices),
+            {
+                "run",
+                "diagnose",
+                "import",
+                "inspect",
+                "observe",
+                "analyze",
+                "report",
+                "compare",
+            },
         )
+
+    def test_compare_multiple_trials_and_ship_gate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for experiment, outcomes in (
+                ("baseline", {"a": [1.0, 0.0], "b": [0.0, 0.0]}),
+                ("candidate", {"a": [1.0, 1.0], "b": [1.0, 0.0]}),
+            ):
+                job = root / experiment
+                for task, rewards in outcomes.items():
+                    for trial, reward in enumerate(rewards, 1):
+                        harbor_trial(
+                            job,
+                            "%s-%s" % (task, trial),
+                            "terminal-bench/%s" % task,
+                            reward=reward,
+                            trajectory_id="%s-%s-%s" % (experiment, task, trial),
+                        )
+                connection = connect(root / "evalplant.db")
+                import_run(connection, job, experiment)
+                connection.close()
+            connection = connect(root / "evalplant.db")
+            result = compare_experiments(connection, "baseline", "candidate", k=2)
+            self.assertEqual(result["eligible_tasks"], 2)
+            self.assertEqual(result["baseline_metrics"]["pass_at_k"], 0.5)
+            self.assertEqual(result["candidate_metrics"]["pass_at_k"], 1.0)
+            self.assertEqual(result["candidate_metrics"]["pass_power_k"], 0.5)
+            self.assertEqual(result["changes"]["improved"], 1)
+            self.assertEqual(result["changes"]["regressed"], 0)
+            self.assertEqual(result["ship_gate"]["status"], "PASS")
+            regression = compare_experiments(connection, "candidate", "baseline", k=2)
+            self.assertEqual(regression["changes"]["regressed"], 1)
+            self.assertEqual(regression["ship_gate"]["status"], "FAIL")
+            stats = report(connection, "candidate")
+            self.assertEqual(stats["total_tasks"], 2)
+            self.assertEqual(stats["total_trials"], 4)
+            self.assertEqual(stats["trial_pass_rate"], 0.75)
+            connection.close()
+            output = root / "comparison.json"
+            self.assertEqual(
+                main(
+                    [
+                        "--db",
+                        str(root / "evalplant.db"),
+                        "compare",
+                        "--baseline",
+                        "baseline",
+                        "--candidate",
+                        "candidate",
+                        "--k",
+                        "2",
+                        "--output",
+                        str(output),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8"))["ship_gate"]["status"],
+                "PASS",
+            )
+
+    def test_run_demo_oneshots_without_api_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db = root / "evalplant.db"
+            report_path = root / "demo-report.json"
+            demo = Path(__file__).resolve().parent.parent / "examples" / "demo-job"
+            code = main(
+                [
+                    "--db",
+                    str(db),
+                    "run",
+                    str(demo),
+                    "--experiment",
+                    "demo",
+                    "--model",
+                    "not-called",
+                    "--output",
+                    str(report_path),
+                ]
+            )
+            self.assertEqual(code, 0)
+            connection = connect(db)
+            row = connection.execute("SELECT * FROM trajectories").fetchone()
+            diagnosis = connection.execute("SELECT * FROM diagnoses").fetchone()
+            self.assertEqual(row["agent_name"], "dsh-minimal")
+            self.assertEqual(row["source_dataset"], "demo")
+            self.assertEqual(row["source_instance_id"], "tool-result-missing")
+            self.assertEqual(diagnosis["matched_rule"], "missing_tool_result")
+            exported = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(exported["statistics"]["failed_tasks"], 1)
+            self.assertEqual(exported["diagnoses"][0]["agent"], "dsh-minimal")
+            self.assertEqual(exported["diagnoses"][0]["dataset"], "demo")
+            buffer = StringIO()
+            with patch.object(
+                cli, "console", Console(file=buffer, force_terminal=False)
+            ):
+                command_inspect(SimpleNamespace(trajectory=row["id"]), connection)
+            text = buffer.getvalue()
+            self.assertIn("Agent: dsh-minimal", text)
+            self.assertIn("Dataset: demo", text)
+            self.assertIn("Task: tool-result-missing", text)
+            connection.close()
+
+    def test_agent_and_bench_are_independent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            harbor_trial(
+                root / "job",
+                "openhands__demo-task",
+                "swe-bench/demo-task",
+                completed_tool=False,
+                agent_name="OpenHands",
+                trajectory_id="openhands-1",
+            )
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, root / "job", "decouple")[0]
+            row = connection.execute(
+                "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
+            ).fetchone()
+            self.assertEqual(row["agent_name"], "OpenHands")
+            self.assertEqual(row["source_dataset"], "swe-bench")
+            self.assertEqual(row["source_instance_id"], "demo-task")
+            self.assertEqual(row["base_task_id"], "demo-task")
+            self.assertNotIn("OpenHands", row["base_task_id"])
+            stats = report(connection, "decouple")
+            self.assertIn("OpenHands", stats["by_agent"])
+            self.assertIn("swe-bench", stats["by_dataset"])
+            connection.close()
+
+    def test_run_watches_live_job_and_diagnoses_new_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "job"
+            job.mkdir()
+            harbor_trial(
+                job,
+                "pass__trial",
+                "terminal-bench/ok-task",
+                reward=1.0,
+                trajectory_id="pass-1",
+            )
+            now = datetime.now(timezone.utc)
+
+            def stamp(seconds):
+                return (now - timedelta(seconds=seconds)).isoformat()
+
+            def event(trial_id, trial_name, task_name, name, state, seconds):
+                return {
+                    "event_version": 1,
+                    "job_id": "live",
+                    "trial_id": trial_id,
+                    "trial_name": trial_name,
+                    "task_name": task_name,
+                    "event": name,
+                    "state": state,
+                    "timestamp": stamp(seconds),
+                }
+
+            events = [
+                event(
+                    "p1",
+                    "pass__trial",
+                    "terminal-bench/ok-task",
+                    "start",
+                    "RUNNING",
+                    30,
+                ),
+                event(
+                    "p1",
+                    "pass__trial",
+                    "terminal-bench/ok-task",
+                    "end",
+                    "SUCCEEDED",
+                    20,
+                ),
+                event(
+                    "f1",
+                    "fail__trial",
+                    "terminal-bench/fail-task",
+                    "start",
+                    "RUNNING",
+                    10,
+                ),
+            ]
+            events_path = job / "execution-events.jsonl"
+            events_path.write_text(
+                "\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8"
+            )
+
+            def inject(tick):
+                if tick != 1:
+                    return
+                harbor_trial(
+                    job,
+                    "fail__trial",
+                    "terminal-bench/fail-task",
+                    completed_tool=False,
+                    reward=0.0,
+                    trajectory_id="fail-1",
+                )
+                events.append(
+                    event(
+                        "f1",
+                        "fail__trial",
+                        "terminal-bench/fail-task",
+                        "end",
+                        "FAILED",
+                        0,
+                    )
+                )
+                events_path.write_text(
+                    "\n".join(json.dumps(item) for item in events) + "\n",
+                    encoding="utf-8",
+                )
+
+            connection = connect(root / "evalplant.db")
+            output = root / "live-report.json"
+            buffer = StringIO()
+            with patch.object(
+                cli, "console", Console(file=buffer, force_terminal=False)
+            ):
+                payload = run_pipeline(
+                    connection,
+                    job,
+                    "live",
+                    "not-called",
+                    once=False,
+                    output=output,
+                    poll_seconds=0,
+                    lost_after_seconds=90,
+                    inject=inject,
+                    max_polls=5,
+                )
+            text = buffer.getvalue()
+            self.assertIn("OK", text)
+            self.assertIn("terminal-bench/ok-task", text)
+            self.assertIn("FAIL", text)
+            self.assertIn("terminal-bench/fail-task", text)
+            self.assertIn("ATTRIBUTED", text)
+            self.assertIn(str(output), text)
+            self.assertEqual(payload["statistics"]["successful_tasks"], 1)
+            self.assertEqual(payload["statistics"]["failed_tasks"], 1)
+            self.assertEqual(len(payload["diagnoses"]), 1)
+            self.assertEqual(payload["diagnoses"][0]["instance_id"], "fail-task")
+            diagnoses = connection.execute("SELECT COUNT(*) FROM diagnoses").fetchone()[
+                0
+            ]
+            self.assertEqual(diagnoses, 1)
+            connection.close()
 
 
 if __name__ == "__main__":

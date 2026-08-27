@@ -57,23 +57,37 @@ def evaluate(
             and isinstance(expected.get("root_cause_step"), int)
             and abs(actual["root_cause_step"] - expected["root_cause_step"]) <= 1
             for expected, actual in paired
+            if isinstance(expected.get("root_cause_step"), int)
         ),
         "selective_root_step_near_accuracy": _rate(
             isinstance(actual.get("root_cause_step"), int)
             and isinstance(expected.get("root_cause_step"), int)
             and abs(actual["root_cause_step"] - expected["root_cause_step"]) <= 1
             for expected, actual in attributed
+            if isinstance(expected.get("root_cause_step"), int)
         ),
         "abstentions": len(paired) - len(attributed),
     }
     for label, field in fields.items():
+        labeled = [
+            (expected, actual)
+            for expected, actual in paired
+            if expected.get(field) is not None
+        ]
+        labeled_attributed = [
+            (expected, actual)
+            for expected, actual in labeled
+            if actual.get("status") == "ATTRIBUTED"
+        ]
+        result["%s_gold_cases" % label] = len(labeled)
         result["%s_accuracy" % label] = _rate(
             actual.get("status") == "ATTRIBUTED"
             and actual.get(field) == expected.get(field)
-            for expected, actual in paired
+            for expected, actual in labeled
         )
         result["selective_%s_accuracy" % label] = _rate(
-            actual.get(field) == expected.get(field) for expected, actual in attributed
+            actual.get(field) == expected.get(field)
+            for expected, actual in labeled_attributed
         )
     reviewed = [
         row["evidence_supported"]

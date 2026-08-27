@@ -1,0 +1,30 @@
+{
+  "dataset": "dengdan1999/RootSE",
+  "license": "MIT",
+  "cases": 102,
+  "agents": 4,
+  "source_models": 7,
+  "source_interactions": 5268,
+  "converted_atif_events": 10496,
+  "judge": {
+    "model": "deepseek-v4-flash",
+    "prompt_version": "engineering_diagnosis_v3",
+    "thinking": "disabled",
+    "temperature": 0,
+    "max_output_tokens": 4096
+  },
+  "pipeline": {
+    "first_pass_attributed": 55,
+    "first_pass_rejected": 47,
+    "attributed_after_one_failed_case_retry": 70,
+    "rejected_after_one_failed_case_retry": 32,
+    "final_coverage": 0.6863
+  },
+  "human_root_step_evaluation": {
+    "exact_hits": 16,
+    "exact_accuracy_all_cases": 0.1569,
+    "near_plus_minus_one_hits": 25,
+    "near_accuracy_all_cases": 0.2451
+  },
+  "boundary": "RootSE labels the earliest decisive agent interaction and reason. It does not provide EvalPlant L1-L4 or evidence-support gold labels."
+}

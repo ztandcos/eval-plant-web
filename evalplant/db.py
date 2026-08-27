@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,7 @@ from .core import (
     validate_trajectory_schema,
 )
 
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 6
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS trajectories (
     raw_event_path TEXT,
     raw_event_sha256 TEXT,
     agent_version TEXT,
+    agent_name TEXT,
     model_name TEXT,
     started_at TEXT,
     finished_at TEXT,
@@ -58,7 +60,43 @@ CREATE TABLE IF NOT EXISTS trajectories (
     source_schema_version TEXT,
     canonical_schema_version TEXT,
     adapter_version TEXT,
+    source_dataset TEXT,
+    source_instance_id TEXT,
     UNIQUE(experiment_id, task_id)
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    experiment_id TEXT NOT NULL REFERENCES experiments(id),
+    task_key TEXT NOT NULL,
+    source_dataset TEXT,
+    source_instance_id TEXT,
+    success_threshold REAL NOT NULL DEFAULT 1.0,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (experiment_id, task_key)
+);
+
+CREATE TABLE IF NOT EXISTS outcomes (
+    trajectory_id TEXT PRIMARY KEY REFERENCES trajectories(id) ON DELETE CASCADE,
+    experiment_id TEXT NOT NULL,
+    task_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reward REAL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (experiment_id, task_key)
+        REFERENCES tasks(experiment_id, task_key)
+);
+
+CREATE TABLE IF NOT EXISTS checks (
+    trajectory_id TEXT NOT NULL REFERENCES trajectories(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    score REAL,
+    weight REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL,
+    evidence TEXT,
+    PRIMARY KEY (trajectory_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS steps (
@@ -135,6 +173,7 @@ TRAJECTORY_MIGRATIONS = {
     "raw_event_path": "TEXT",
     "raw_event_sha256": "TEXT",
     "agent_version": "TEXT",
+    "agent_name": "TEXT",
     "model_name": "TEXT",
     "started_at": "TEXT",
     "finished_at": "TEXT",
@@ -148,6 +187,8 @@ TRAJECTORY_MIGRATIONS = {
     "source_schema_version": "TEXT",
     "canonical_schema_version": "TEXT",
     "adapter_version": "TEXT",
+    "source_dataset": "TEXT",
+    "source_instance_id": "TEXT",
 }
 
 DIAGNOSIS_MIGRATIONS = {
@@ -206,6 +247,59 @@ def connect(path: Path) -> sqlite3.Connection:
         UPDATE trajectories SET reward=CASE
             WHEN verdict='PASS' THEN 1.0 WHEN verdict='FAIL' THEN 0.0 END
         WHERE reward IS NULL AND verdict IN ('PASS', 'FAIL')
+        """
+    )
+    task_key = """
+        CASE
+            WHEN source_dataset IS NOT NULL AND source_dataset!=''
+             AND source_instance_id IS NOT NULL AND source_instance_id!=''
+            THEN CASE
+                WHEN source_instance_id LIKE source_dataset || '/%'
+                THEN source_instance_id
+                ELSE source_dataset || '/' || source_instance_id
+            END
+            ELSE COALESCE(base_task_id, task_id)
+        END
+    """
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO tasks (
+            experiment_id, task_key, source_dataset, source_instance_id,
+            success_threshold, metadata_json
+        )
+        SELECT experiment_id, %s, source_dataset, source_instance_id, 1.0, '{}'
+        FROM trajectories
+        """
+        % task_key
+    )
+    connection.execute(
+        """
+        INSERT INTO outcomes (
+            trajectory_id, experiment_id, task_key, status, reward,
+            metadata_json, created_at
+        )
+        SELECT id, experiment_id, %s, verdict, reward, '{}', ?
+        FROM trajectories
+        WHERE 1
+        ON CONFLICT(trajectory_id) DO UPDATE SET
+            status=excluded.status, reward=excluded.reward
+        """
+        % task_key,
+        (utcnow(),),
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO checks (
+            trajectory_id, name, kind, status, score, weight, source, evidence
+        )
+        SELECT t.id, 'reward:aggregate', 'CODE',
+               CASE WHEN t.reward>=1.0 THEN 'PASS' ELSE 'FAIL' END,
+               t.reward, 1.0, 'migration', 'aggregate verifier reward'
+        FROM trajectories t
+        WHERE t.reward IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM checks c WHERE c.trajectory_id=t.id
+          )
         """
     )
     connection.execute("PRAGMA user_version = %s" % DATABASE_SCHEMA_VERSION)
@@ -420,7 +514,179 @@ def execution_status(
 
 
 def _number(value: Any) -> Optional[float]:
-    return float(value) if isinstance(value, (int, float)) else None
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
+
+
+def _first_text(*values: Any) -> Optional[str]:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value is not None and not isinstance(value, (dict, list, bool)):
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
+def _mapping(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _task_key(metadata: Dict[str, Any]) -> str:
+    dataset = str(metadata.get("source_dataset") or "").strip()
+    instance = str(
+        metadata.get("source_instance_id") or metadata.get("base_task_id") or ""
+    ).strip()
+    if not instance:
+        raise ValueError("Imported trajectory is missing a logical task id")
+    return (
+        instance
+        if not dataset or instance.startswith(dataset + "/")
+        else "%s/%s" % (dataset, instance)
+    )
+
+
+def _evaluation_data(
+    verifier: Dict[str, Any], verdict: str, reward: Optional[float]
+) -> Dict[str, Any]:
+    threshold = _number(verifier.get("success_threshold"))
+    threshold = 1.0 if threshold is None else threshold
+    if not math.isfinite(threshold):
+        raise ValueError("Verifier success_threshold must be finite")
+    checks = []
+    for name, value in _mapping(verifier.get("rewards")).items():
+        score = _number(value)
+        if score is None or not math.isfinite(score):
+            continue
+        checks.append(
+            {
+                "name": "reward:%s" % name,
+                "kind": "CODE",
+                "status": "PASS" if score >= threshold else "FAIL",
+                "score": score,
+                "weight": 1.0,
+                "source": "verifier_result.rewards",
+                "evidence": "%s=%s" % (name, score),
+            }
+        )
+    raw_checks = verifier.get("checks") or []
+    if not isinstance(raw_checks, list):
+        raise ValueError("verifier_result.checks must be a list")
+    for index, item in enumerate(raw_checks, 1):
+        if not isinstance(item, dict):
+            raise ValueError("Verifier check %s must be an object" % index)
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise ValueError("Verifier check %s is missing name" % index)
+        score = _number(item.get("score"))
+        if score is not None and not math.isfinite(score):
+            raise ValueError("Verifier check %s score must be finite" % name)
+        status = str(item.get("status") or "").upper()
+        if not status and score is not None:
+            status = "PASS" if score >= threshold else "FAIL"
+        if status not in {"PASS", "FAIL", "UNKNOWN"}:
+            raise ValueError("Verifier check %s has invalid status" % name)
+        weight = _number(item.get("weight"))
+        weight = 1.0 if weight is None else weight
+        if not math.isfinite(weight) or weight <= 0:
+            raise ValueError("Verifier check %s weight must be positive" % name)
+        kind = str(item.get("kind") or "CODE").upper()
+        if kind not in {"CODE", "LLM", "HUMAN"}:
+            raise ValueError("Verifier check %s has invalid kind" % name)
+        checks.append(
+            {
+                "name": name,
+                "kind": kind,
+                "status": status,
+                "score": score,
+                "weight": weight,
+                "source": str(
+                    sanitize_value(item.get("source") or "verifier_result.checks")
+                )[:500],
+                "evidence": str(sanitize_value(item.get("evidence") or ""))[:4000]
+                or None,
+            }
+        )
+    if not checks and verdict in {"PASS", "FAIL"}:
+        checks.append(
+            {
+                "name": "verdict",
+                "kind": "CODE",
+                "status": verdict,
+                "score": reward,
+                "weight": 1.0,
+                "source": "result",
+                "evidence": "verdict=%s" % verdict,
+            }
+        )
+    names = [item["name"] for item in checks]
+    if len(names) != len(set(names)):
+        raise ValueError("Verifier check names must be unique")
+    return {
+        "success_threshold": threshold,
+        "checks": checks,
+        "outcome_metadata": sanitize_value(
+            {"rewards": _mapping(verifier.get("rewards"))}
+        ),
+    }
+
+
+def _agent_identity(
+    data: Dict[str, Any], result: Optional[Dict[str, Any]] = None
+) -> Dict[str, Optional[str]]:
+    result = result or {}
+    agent = data.get("agent")
+    if isinstance(agent, str):
+        name, version, model = agent, None, None
+    else:
+        agent = _mapping(agent)
+        name = agent.get("name")
+        version = agent.get("version")
+        model = agent.get("model_name")
+    result_agent = _mapping(result.get("agent_info"))
+    model_info = _mapping(result_agent.get("model_info"))
+    return {
+        "agent_name": _first_text(name, result_agent.get("name")),
+        "agent_version": _first_text(version, result_agent.get("version")),
+        "model_name": _first_text(model, model_info.get("name")),
+    }
+
+
+def _bench_identity(
+    data: Dict[str, Any],
+    result: Optional[Dict[str, Any]],
+    fallback: str,
+) -> Dict[str, str]:
+    result = result or {}
+    extra = _mapping(data.get("extra"))
+    result_extra = _mapping(result.get("extra"))
+    source = _mapping(data.get("source"))
+    dataset = _first_text(
+        extra.get("source_dataset"),
+        result_extra.get("source_dataset"),
+        source.get("dataset"),
+    )
+    instance = _first_text(
+        extra.get("source_instance_id"),
+        result_extra.get("source_instance_id"),
+        data.get("task_id"),
+    )
+    task_name = _first_text(result.get("task_name"), data.get("task_id"), fallback)
+    task_name = task_name or fallback
+    if not dataset and not instance and "/" in task_name:
+        dataset, instance = task_name.split("/", 1)
+    if not instance:
+        instance = task_name
+    return {
+        "source_dataset": dataset,
+        "source_instance_id": instance,
+        "base_task_id": instance,
+        "task_name": task_name,
+    }
 
 
 def _duration_seconds(value: Any) -> Optional[float]:
@@ -440,31 +706,42 @@ def _duration_seconds(value: Any) -> Optional[float]:
     return max(0.0, (finish - start).total_seconds())
 
 
-def _harbor_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
+def _atif_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
     trial_dir = raw_path.parent.parent
     result_path = trial_dir / "result.json"
     result = read_json(result_path) if result_path.exists() else {}
     exception = result.get("exception_info") or {}
     verifier = result.get("verifier_result") or {}
-    rewards = verifier.get("rewards") or {}
+    rewards = _mapping(verifier.get("rewards"))
     values = [_number(value) for value in rewards.values()]
     values = [value for value in values if value is not None]
     reward = sum(values) / len(values) if values else None
+    success_threshold = _number(verifier.get("success_threshold"))
+    success_threshold = 1.0 if success_threshold is None else success_threshold
     exception_type = str(exception.get("exception_type") or "")
     if exception:
         verdict = "TIMEOUT" if "timeout" in exception_type.lower() else "INFRA_ERROR"
         health = "VALID" if verdict == "TIMEOUT" else "INFRA_ERROR"
     elif verifier and reward is not None:
-        verdict, health = ("PASS" if reward == 1 else "FAIL"), "VALID"
+        verdict, health = (
+            "PASS" if reward >= success_threshold else "FAIL",
+            "VALID",
+        )
     elif result.get("agent_result"):
         verdict, health = "UNKNOWN", "VALID"
     else:
         verdict, health = "UNKNOWN", "INCOMPLETE"
+    evaluation = _evaluation_data(verifier, verdict, reward)
+    if verdict == "UNKNOWN" and evaluation["checks"]:
+        statuses = {item["status"] for item in evaluation["checks"]}
+        if "FAIL" in statuses:
+            verdict = "FAIL"
+        elif statuses == {"PASS"}:
+            verdict = "PASS"
+        health = "VALID"
 
-    agent = data.get("agent") or {}
-    result_agent = result.get("agent_info") or {}
-    model_info = result_agent.get("model_info") or {}
-    task_id = str(result.get("task_name") or trial_dir.name)
+    identity = _agent_identity(data, result)
+    bench = _bench_identity(data, result, trial_dir.name)
     trial_name = str(result.get("trial_name") or trial_dir.name)
     raw_events = sorted((trial_dir / "agent").rglob("session.jsonl"))
     final_logs = [
@@ -473,16 +750,20 @@ def _harbor_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
     ]
     agent_result = result.get("agent_result") or {}
     return {
-        "base_task_id": task_id,
-        "storage_task_id": "%s::%s" % (task_id, trial_name),
+        "task_name": bench["task_name"],
+        "base_task_id": bench["base_task_id"],
+        "storage_task_id": "%s::%s" % (bench["task_name"], trial_name),
         "trajectory_id": str(result.get("id") or sha256_file(raw_path)[:16]),
         "trial_name": trial_name,
         "verdict": verdict,
         "health_status": health,
         "reward": reward,
         "raw_event_path": raw_events[0] if raw_events else None,
-        "agent_version": agent.get("version") or result_agent.get("version"),
-        "model_name": agent.get("model_name") or model_info.get("name"),
+        "agent_name": identity["agent_name"],
+        "agent_version": identity["agent_version"],
+        "model_name": identity["model_name"],
+        "source_dataset": bench["source_dataset"],
+        "source_instance_id": bench["source_instance_id"],
         "started_at": result.get("started_at"),
         "finished_at": result.get("finished_at"),
         "final_log_path": next((path for path in final_logs if path.exists()), None),
@@ -495,24 +776,32 @@ def _harbor_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
         "agent_setup_seconds": _duration_seconds(result.get("agent_setup")),
         "agent_execution_seconds": _duration_seconds(result.get("agent_execution")),
         "verifier_seconds": _duration_seconds(result.get("verifier")),
+        **evaluation,
     }
 
 
 def _legacy_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
-    task_id = str(data.get("task_id") or raw_path.parent.name or raw_path.stem)
+    fallback = str(raw_path.parent.name or raw_path.stem)
+    identity = _agent_identity(data)
+    bench = _bench_identity(data, None, fallback)
     verdict = str(data.get("verdict") or "UNKNOWN").upper()
     stats = (data.get("info") or {}).get("model_stats") or {}
+    reward = 1.0 if verdict == "PASS" else (0.0 if verdict == "FAIL" else None)
     return {
-        "base_task_id": task_id,
-        "storage_task_id": task_id,
+        "task_name": bench["task_name"],
+        "base_task_id": bench["base_task_id"],
+        "storage_task_id": bench["task_name"],
         "trajectory_id": sha256_file(raw_path)[:16],
-        "trial_name": task_id,
+        "trial_name": bench["task_name"],
         "verdict": verdict,
         "health_status": "INFRA_ERROR" if verdict == "INFRA_ERROR" else "VALID",
-        "reward": 1.0 if verdict == "PASS" else (0.0 if verdict == "FAIL" else None),
+        "reward": reward,
         "raw_event_path": None,
-        "agent_version": None,
-        "model_name": None,
+        "agent_name": identity["agent_name"],
+        "agent_version": identity["agent_version"],
+        "model_name": identity["model_name"],
+        "source_dataset": bench["source_dataset"],
+        "source_instance_id": bench["source_instance_id"],
         "started_at": None,
         "finished_at": None,
         "final_log_path": raw_path.parent / "final_test.log",
@@ -525,7 +814,80 @@ def _legacy_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
         "agent_setup_seconds": None,
         "agent_execution_seconds": None,
         "verifier_seconds": None,
+        **_evaluation_data({}, verdict, reward),
     }
+
+
+def _save_evaluation_records(
+    connection: sqlite3.Connection,
+    experiment_id: str,
+    trajectory_id: str,
+    metadata: Dict[str, Any],
+) -> None:
+    task_key = _task_key(metadata)
+    connection.execute(
+        """
+        INSERT INTO tasks (
+            experiment_id, task_key, source_dataset, source_instance_id,
+            success_threshold, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(experiment_id, task_key) DO UPDATE SET
+            source_dataset=excluded.source_dataset,
+            source_instance_id=excluded.source_instance_id,
+            success_threshold=excluded.success_threshold,
+            metadata_json=excluded.metadata_json
+        """,
+        (
+            experiment_id,
+            task_key,
+            metadata.get("source_dataset"),
+            metadata.get("source_instance_id"),
+            metadata["success_threshold"],
+            json.dumps({"task_name": metadata.get("task_name")}, ensure_ascii=False),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO outcomes (
+            trajectory_id, experiment_id, task_key, status, reward,
+            metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(trajectory_id) DO UPDATE SET
+            experiment_id=excluded.experiment_id, task_key=excluded.task_key,
+            status=excluded.status, reward=excluded.reward,
+            metadata_json=excluded.metadata_json, created_at=excluded.created_at
+        """,
+        (
+            trajectory_id,
+            experiment_id,
+            task_key,
+            metadata["verdict"],
+            metadata["reward"],
+            json.dumps(metadata["outcome_metadata"], ensure_ascii=False),
+            utcnow(),
+        ),
+    )
+    connection.execute("DELETE FROM checks WHERE trajectory_id=?", (trajectory_id,))
+    connection.executemany(
+        """
+        INSERT INTO checks (
+            trajectory_id, name, kind, status, score, weight, source, evidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                trajectory_id,
+                item["name"],
+                item["kind"],
+                item["status"],
+                item["score"],
+                item["weight"],
+                item["source"],
+                item["evidence"],
+            )
+            for item in metadata["checks"]
+        ],
+    )
 
 
 def import_run(
@@ -542,12 +904,12 @@ def import_run(
         source_schema_version = validate_trajectory_schema(data)
         is_atif = source_schema_version is not None
         metadata = (
-            _harbor_metadata(raw_path, data)
+            _atif_metadata(raw_path, data)
             if is_atif
             else _legacy_metadata(raw_path, data)
         )
         existing = connection.execute(
-            "SELECT id FROM trajectories WHERE experiment_id=? AND task_id=?",
+            "SELECT id, raw_sha256 FROM trajectories WHERE experiment_id=? AND task_id=?",
             (experiment_id, metadata["storage_task_id"]),
         ).fetchone()
         trajectory_id = existing["id"] if existing else metadata["trajectory_id"]
@@ -567,18 +929,21 @@ def import_run(
         final_patch = task_dir / "final.patch"
         final_log = metadata["final_log_path"]
         raw_event = metadata["raw_event_path"]
+        same_trace = bool(existing and existing["raw_sha256"] == raw_digest)
         connection.execute(
             """
             INSERT INTO trajectories (
                 id, experiment_id, task_id, verdict, raw_path, raw_sha256,
                 final_patch_path, final_log_path, cost, api_calls, base_task_id,
                 trial_name, health_status, reward, raw_event_path, raw_event_sha256,
-                agent_version, model_name, started_at, finished_at, input_tokens,
-                cache_tokens, output_tokens, environment_setup_seconds,
-                agent_setup_seconds, agent_execution_seconds, verifier_seconds
-                , source_schema_version, canonical_schema_version, adapter_version
+                agent_version, agent_name, model_name, started_at, finished_at,
+                input_tokens, cache_tokens, output_tokens,
+                environment_setup_seconds, agent_setup_seconds,
+                agent_execution_seconds, verifier_seconds, source_schema_version,
+                canonical_schema_version, adapter_version, source_dataset,
+                source_instance_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(experiment_id, task_id) DO UPDATE SET
                 verdict=excluded.verdict, raw_path=excluded.raw_path,
                 raw_sha256=excluded.raw_sha256,
@@ -588,7 +953,8 @@ def import_run(
                 trial_name=excluded.trial_name, health_status=excluded.health_status,
                 reward=excluded.reward, raw_event_path=excluded.raw_event_path,
                 raw_event_sha256=excluded.raw_event_sha256,
-                agent_version=excluded.agent_version, model_name=excluded.model_name,
+                agent_version=excluded.agent_version, agent_name=excluded.agent_name,
+                model_name=excluded.model_name,
                 started_at=excluded.started_at, finished_at=excluded.finished_at,
                 input_tokens=excluded.input_tokens, cache_tokens=excluded.cache_tokens,
                 output_tokens=excluded.output_tokens,
@@ -598,7 +964,9 @@ def import_run(
                 verifier_seconds=excluded.verifier_seconds,
                 source_schema_version=excluded.source_schema_version,
                 canonical_schema_version=excluded.canonical_schema_version,
-                adapter_version=excluded.adapter_version
+                adapter_version=excluded.adapter_version,
+                source_dataset=excluded.source_dataset,
+                source_instance_id=excluded.source_instance_id
             """,
             (
                 trajectory_id,
@@ -618,6 +986,7 @@ def import_run(
                 str(raw_event.resolve()) if raw_event else None,
                 sha256_file(raw_event) if raw_event else None,
                 metadata["agent_version"],
+                metadata["agent_name"],
                 metadata["model_name"],
                 metadata["started_at"],
                 metadata["finished_at"],
@@ -631,8 +1000,15 @@ def import_run(
                 source_schema_version or "legacy",
                 CANONICAL_SCHEMA_VERSION,
                 ADAPTER_VERSION,
+                metadata["source_dataset"],
+                metadata["source_instance_id"],
             ),
         )
+        _save_evaluation_records(connection, experiment_id, trajectory_id, metadata)
+        if same_trace:
+            connection.commit()
+            trajectory_ids.append(trajectory_id)
+            continue
         connection.execute("DELETE FROM steps WHERE trajectory_id=?", (trajectory_id,))
         connection.execute(
             "DELETE FROM diagnoses WHERE trajectory_id=?", (trajectory_id,)

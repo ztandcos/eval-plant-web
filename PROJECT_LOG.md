@@ -1,6 +1,6 @@
 # EvalPlant 项目说明与工作记录
 
-更新日期：2026-08-26
+更新日期：2026-08-27
 
 项目目录：`/Users/shaw/eval-plant`
 
@@ -8,12 +8,12 @@
 
 ## 当前目标
 
-EvalPlant 是 Harbor 运行结果之后的一层离线诊断后台：消费任务生命周期事件并导入 ATIF，先用确定性事实判断 Harness 是否有已证实故障，其余失败由受约束 Judge 分析，最后保存诊断并做统计。系统只做诊断和统计，不做在线反馈、修复执行、插件生成或科研式算法对比；任务隔离和自动重试由 Harbor 执行层负责。
+EvalPlant 是 Harbor 运行结果之后的一层 Outcome-first 离线评测与诊断后台：消费任务生命周期事件、ATIF、Verifier Outcome 和 Checks，统计 Task/Trial 结果并比较 Agent 版本，再对失败轨迹执行受约束诊断。系统不做在线反馈、修复执行、插件生成或科研式算法对比；任务隔离和自动重试由 Harbor 执行层负责。
 
 当前唯一完整链路是：
 
 ```text
-Harbor / DeepSeek Harness → observe / ATIF import → analyze → inspect / report
+Harbor / DeepSeek Harness → observe / import → outcome checks / compare → analyze → inspect / report
 ```
 
 ## 当前实现
@@ -79,3 +79,19 @@ ATIF 导入改为未知版本 fail-closed，保存 source/canonical/adapter 版�
 Harbor 第四个补丁加入 trial 生命周期 JSONL 和 30 秒心跳，失败 attempt 在重试前归档而不是删除。Harbor 原生有界并发确保单 trial 异常不终止整个 job，重试配置只允许基础设施或瞬态服务异常。EvalPlant 新增 `attempts` 表和 `observe` 命令，同一逻辑任务可查看多次尝试，运行中超过阈值未收到心跳会显示 `LOST`。状态写盘失败只告警，不反向中断任务；重试归档重名时使用 attempt ID 避免阻断。第四补丁在干净 Harbor 基线上重放通过，tree 指纹为 `bfea9c800c913be0d23225b7f8472a3ac5f06f9e`。
 
 代码自动验收为 EvalPlant 19 项、Harbor 相关 71 项（DSH 适配器 9 项、状态与队列 62 项）。版本升级到 0.4.0。剩余工作只是真实效果验收：输入公开失败轨迹，由独立人工形成 review/gold 后运行评测；在此之前不报告虚构准确率。
+
+## 2026-08-27：RootSE 真实验收与 thinking 配对实验
+
+接入公开 RootSE 的 102 条人工标注失败轨迹，覆盖 4 类 Agent、7 类模型。5268 个 RootSE 交互转换为 10496 个 ATIF 事件，人工最早决定性错误步骤与 Judge 输入分离。使用 `deepseek-v4-flash`、`engineering_diagnosis_v3`、thinking 关闭完成真实归因：单次失败重试后有 70 条通过证据校验、32 条被拒收；原始交互级精确命中 16/102，前后一步命中 25/102。主要偏差是 Judge 选择后续错误补丁或测试失败点，而不是人工标注的最早错误决策。
+
+随后固定抽取 20 条做配对消融，包括 5 条旧命中、10 条后置归因、5 条旧拒收。非 thinking 为 15 条有效、5 条精确命中；thinking-high（16384 输出上限）只有 6 条有效、2 条精确命中，9 条旧有效结果退化为拒收，5 条旧拒收没有一条被救回。有效结果的选择性精确率同为 33.3%，但 thinking 的覆盖率从 75% 降到 30%，有效输出 token 从 15728 增至 58433，中位有效延迟从 6.1 秒增至 82.7 秒。因此当前单调用 Prompt 保持默认关闭 thinking，配置改为环境变量可控且写入配置哈希。
+
+下一阶段不再把“LLM 找根因”当作整个平台，而是按 `Task → Trial → Transcript + Outcome → Checks → Grader → Diagnosis → Report` 建设 Outcome-first 离线评测。优先补充 Task/Trial/Check/Outcome 数据契约和确定性 outcome grader；LLM Judge 只处理开放性判断并保留不确定出口，RootSE 作为 Judge 校准集。之后再做同任务多 trial、版本配对比较、成本与回退门槛，最后形成 capability、regression、adversarial、multi-turn hard 四类可持续任务集。在线业务指标仍不在当前阶段范围内。
+
+## 2026-08-27：Outcome-first 评测与版本门禁完成
+
+SQLite schema 升至 6，在现有 `trajectories=Trial` 和 `base_task_id=Task` 基础上增加 `tasks/outcomes/checks`，没有重复建设新的执行抽象。导入 Harbor 时，Verifier rewards 自动转换为确定性 CODE Check；也支持显式 `verifier_result.checks`，并对名称、类型、状态、有限分数、正权重做 trust-boundary 校验。旧数据库打开时自动从现有 verdict/reward 回填，原始轨迹无需重跑。
+
+`report` 现在同时统计逻辑 Task、Trial、trial pass rate、Task 至少一次成功率、Task 全部 Trial 稳定成功率和加权 Check 通过率，并在机器报告中逐 Trial 导出 Outcome 与 Checks。新增 `compare` 命令，只比较两个实验共有且双方至少有 k 次 Trial 的 Task，计算经验 pass@k、pass^k、成本和 Agent 耗时变化，列出 improved/regressed/unchanged；存在回归、pass@k 下降或平均成本上涨超过阈值时 Ship Gate 失败。
+
+项目版本升级为 0.5.0。真实 RootSE 与 thinking 配对结果的脱敏摘要进入 `reports/`，仓库外不再是唯一证据。EvalPlant 自动测试增至 24 项并通过；Web UI、在线业务指标、PostgreSQL 和全量 150-task suite 仍按明确边界不实现。

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evalplant"
-version = "0.4.0"
-description = "Harbor trajectory diagnosis and statistics for coding agents"
+version = "0.5.0"
+description = "Outcome-first offline evaluation and diagnosis for coding agents"
 requires-python = ">=3.9"
 dependencies = [
   "openai>=1.0",

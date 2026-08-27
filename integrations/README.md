@@ -20,7 +20,7 @@ export DEEPSEEK_API_KEY='你的有效 Key'
 uv run harbor run --config examples/configs/agents/dsh-minimal-job.yaml
 ```
 
-Harbor 生成 job 后，回到 EvalPlant 根目录，使用 `evalplant import` 导入整个 job 目录。补丁中不包含任何真实 API Key。
+Harbor 生成 job 后，回到 EvalPlant 根目录，使用 `evalplant run harbor/jobs/JOB_NAME` 导入并诊断；作业仍在跑时同一条命令会监视失败 trial。补丁中不包含任何真实 API Key。
 
 运行期间可在另一个终端同步查看状态：
 

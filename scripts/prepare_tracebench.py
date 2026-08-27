@@ -80,6 +80,7 @@ def convert_case(row: dict, archive: Path, output: Path) -> None:
         data = json.loads(trajectories[0].read_text(encoding="utf-8"))
         data["task_id"] = row["task_name"]
         data["verdict"] = "FAIL"
+        data["agent"] = row.get("agent")
         data["source"] = {
             "dataset": "Contextbench/Tracebench",
             "trajectory_id": row["traj_id"],

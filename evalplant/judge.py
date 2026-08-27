@@ -28,8 +28,14 @@ PROMPT_PATH = Path(__file__).with_name("diagnosis_prompt.txt")
 PROMPT_VERSION = "engineering_diagnosis_v3"
 RULE_VERSION = "harness_rules_v2"
 DEFAULT_MAX_INPUT_TOKENS = 100_000
-DEFAULT_MAX_OUTPUT_TOKENS = 4_096
-THINKING_CONFIG = "disabled"
+DEFAULT_MAX_OUTPUT_TOKENS = int(os.getenv("EVALPLANT_JUDGE_MAX_OUTPUT_TOKENS", "4096"))
+THINKING_CONFIG = os.getenv("EVALPLANT_JUDGE_THINKING", "disabled")
+REASONING_EFFORT = os.getenv("EVALPLANT_JUDGE_REASONING_EFFORT", "high")
+THINKING_LABEL = (
+    "%s:%s" % (THINKING_CONFIG, REASONING_EFFORT)
+    if THINKING_CONFIG == "enabled"
+    else THINKING_CONFIG
+)
 TEMPERATURE = 0
 
 
@@ -40,7 +46,7 @@ def diagnosis_config_hash(model: str, max_input_tokens: int) -> str:
         "rule_version": RULE_VERSION,
         "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
         "adapter_version": ADAPTER_VERSION,
-        "thinking": THINKING_CONFIG,
+        "thinking": THINKING_LABEL,
         "temperature": TEMPERATURE,
         "max_input_tokens": max_input_tokens,
         "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
@@ -272,17 +278,21 @@ def _json_call(
     client: Any, model: str, system: str, payload: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     started = time.monotonic()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    request = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
-        response_format={"type": "json_object"},
-        temperature=TEMPERATURE,
-        max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-        extra_body={"thinking": {"type": "disabled"}},
-    )
+        "response_format": {"type": "json_object"},
+        "max_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
+        "extra_body": {"thinking": {"type": THINKING_CONFIG}},
+    }
+    if THINKING_CONFIG == "enabled":
+        request["reasoning_effort"] = REASONING_EFFORT
+    else:
+        request["temperature"] = TEMPERATURE
+    response = client.chat.completions.create(**request)
     content = response.choices[0].message.content
     if not content:
         raise ValueError("Judge returned an empty response")
@@ -295,6 +305,24 @@ def _json_call(
         "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
         "latency_seconds": time.monotonic() - started,
     }
+
+
+def _quote_present(quote: str, source: str) -> bool:
+    if quote in source:
+        return True
+    normalized_quote = " ".join(quote.split())
+    normalized_source = " ".join(source.split())
+    return bool(normalized_quote and normalized_quote in normalized_source)
+
+
+def _string_values(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [item for nested in value.values() for item in _string_values(nested)]
+    if isinstance(value, list):
+        return [item for nested in value for item in _string_values(nested)]
+    return []
 
 
 def _validate_llm_report(
@@ -320,7 +348,7 @@ def _validate_llm_report(
         "judge_input_tokens": usage["input_tokens"],
         "judge_output_tokens": usage["output_tokens"],
         "judge_latency_seconds": usage["latency_seconds"],
-        "judge_thinking": THINKING_CONFIG,
+        "judge_thinking": THINKING_LABEL,
         "judge_temperature": TEMPERATURE,
         "judge_call_count": int(usage.get("call_count") or 1),
         "trajectory_mode": trajectory_mode,
@@ -387,7 +415,12 @@ def _validate_llm_report(
         step_id = item.get("step_id")
         source = str(item.get("source") or "trajectory")
         supports_claim = str(item.get("supports_claim") or "").strip()
-        relation = str(item.get("relation") or "").upper()
+        relation = str(item.get("relation") or "").upper().replace("-", "_")
+        relation = {
+            "DIRECT": "DIRECT_SUPPORT",
+            "SUPPORT": "DIRECT_SUPPORT",
+            "CONTEXT": "CONTEXT_SUPPORT",
+        }.get(relation, relation)
         if not quote:
             raise ValueError("evidence quote cannot be empty")
         if not supports_claim:
@@ -402,13 +435,20 @@ def _validate_llm_report(
             step = valid_steps[step_id]
             haystack = str(
                 sanitize_value(
-                    "%s\n%s" % (step.get("content") or "", step.get("command") or "")
+                    "%s\n%s\n%s"
+                    % (
+                        step.get("content") or "",
+                        step.get("command") or "",
+                        "\n".join(_string_values(step.get("tool_arguments"))),
+                    )
                 )
             )
-            if quote not in haystack:
+            if not _quote_present(quote, haystack):
                 raise ValueError("evidence quote is not present in step %s" % step_id)
             source = str(step.get("role") or source)
-        elif quote not in sanitized_log and quote not in facts_text:
+        elif not _quote_present(quote, sanitized_log) and not _quote_present(
+            quote, facts_text
+        ):
             raise ValueError("non-step evidence quote is not present in logs or facts")
         verified.append(
             {
@@ -509,7 +549,7 @@ def failed_diagnosis(
         "judge_input_tokens": 0,
         "judge_output_tokens": 0,
         "judge_latency_seconds": 0.0,
-        "judge_thinking": THINKING_CONFIG,
+        "judge_thinking": THINKING_LABEL,
         "judge_temperature": TEMPERATURE,
         "judge_call_count": 0,
         "trajectory_mode": None,

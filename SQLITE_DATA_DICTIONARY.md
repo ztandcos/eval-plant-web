@@ -1,6 +1,6 @@
 # EvalPlant SQLite 字段说明
 
-默认工作库是 `data/evalplant.db`，schema 版本为 4，共 5 张业务表。`experiments` 是一次批次，`attempts` 是 Harbor 每次执行尝试，`trajectories` 是每个逻辑任务的最终轨迹，`steps` 是轨迹步骤索引，`diagnoses` 是最新诊断。`NULL` 表示上游未提供或该字段不适用。
+默认工作库是 `data/evalplant.db`，schema 版本为 6，共 8 张业务表。`experiments` 是一次批次，`tasks` 是逻辑考题，`attempts` 是 Harbor 基础设施尝试，`trajectories` 是 Agent 的一次 Trial，`outcomes/checks` 是真实结果与检查项，`steps` 是轨迹索引，`diagnoses` 是失败诊断。`NULL` 表示上游未提供或该字段不适用。
 
 同目录的 `-wal` 和 `-shm` 是 SQLite WAL 并发模式的辅助文件，不是多余数据库，运行中不能删除。
 
@@ -34,6 +34,17 @@
 | `finished_at` | END/CANCEL 时间，运行中为空。 |
 | `event_count` | 已消费的该 attempt 生命周期事件数。 |
 
+## tasks：实验内的逻辑任务
+
+| 字段 | 含义 |
+|---|---|
+| `experiment_id` | 所属实验，与 `task_key` 组成主键。 |
+| `task_key` | 跨 Agent 版本配对使用的稳定任务名，通常为“数据集/实例”。 |
+| `source_dataset` | Benchmark 或公开数据集名称。 |
+| `source_instance_id` | 数据集内实例 ID。 |
+| `success_threshold` | reward/check 分数达到该值视为通过，默认 1.0。 |
+| `metadata_json` | 不含原始 Prompt 的最小任务来源元数据。 |
+
 ## trajectories：逻辑任务的最终运行轨迹
 
 | 字段 | 含义 |
@@ -55,6 +66,7 @@
 | `raw_event_path` | DSH 原始 session JSONL 路径。 |
 | `raw_event_sha256` | 原始 session 文件指纹。 |
 | `agent_version` | Agent/Harness 实际版本。 |
+| `agent_name` | 产生轨迹的 Agent 名，与 Benchmark 无关。 |
 | `model_name` | 运行任务的实际模型。 |
 | `started_at` | Harbor 记录的开始时间。 |
 | `finished_at` | Harbor 记录的结束时间。 |
@@ -68,6 +80,33 @@
 | `source_schema_version` | 原轨迹 ATIF 版本；旧格式记 `legacy`。 |
 | `canonical_schema_version` | EvalPlant 内部统一 schema 版本。 |
 | `adapter_version` | 本次上游到 canonical 的转换器版本。 |
+| `source_dataset` | Benchmark/数据集名，例如 `terminal-bench` 或 `dengdan1999/RootSE`。 |
+| `source_instance_id` | 数据集内的任务/实例 ID，不含 Agent 名。 |
+
+## outcomes：每次 Trial 的真实结果
+
+| 字段 | 含义 |
+|---|---|
+| `trajectory_id` | 对应 Trial，也是主键。 |
+| `experiment_id` | 所属实验。 |
+| `task_key` | 对应逻辑 Task。 |
+| `status` | `PASS/FAIL/TIMEOUT/INFRA_ERROR/UNKNOWN/INCOMPLETE`。 |
+| `reward` | Verifier 聚合分数；缺失时为空。 |
+| `metadata_json` | 脱敏后的结构化 Outcome 元数据，目前保存各 reward。 |
+| `created_at` | 本次 Outcome 导入时间。 |
+
+## checks：Outcome 的原子检查项
+
+| 字段 | 含义 |
+|---|---|
+| `trajectory_id` | 对应 Trial，与 `name` 组成主键。 |
+| `name` | 检查项名称；Harbor reward 自动转成 `reward:<name>`。 |
+| `kind` | `CODE/LLM/HUMAN`，表示评分来源。 |
+| `status` | `PASS/FAIL/UNKNOWN`。 |
+| `score` | 可选数值分数。 |
+| `weight` | 汇总加权值，必须大于 0。 |
+| `source` | Verifier 字段或人工来源。 |
+| `evidence` | 脱敏后的简短结果证据，不保存完整敏感轨迹。 |
 
 ## steps：脱敏后的轨迹步骤索引
 
@@ -103,7 +142,7 @@
 | `judge_input_tokens` | 全部 Judge 调用输入 token 总和。 |
 | `judge_output_tokens` | 全部 Judge 调用输出 token 总和。 |
 | `judge_latency_seconds` | 全部 Judge 调用耗时总和。 |
-| `judge_thinking` | 当前固定 `disabled`；未调用为 `not_called`。 |
+| `judge_thinking` | 默认 `disabled`，消融实验可记录 `enabled:<effort>`；未调用为 `not_called`。 |
 | `judge_max_input_tokens` | 本次输入预算。 |
 | `judge_max_output_tokens` | 本次输出上限。 |
 | `diagnosis_error` | 调用、解析或校验失败原因。 |

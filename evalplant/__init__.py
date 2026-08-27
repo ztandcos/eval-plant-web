@@ -1,3 +1,3 @@
-"""EvalPlant: Harbor trajectory diagnosis and statistics for coding agents."""
+"""EvalPlant: outcome-first evaluation and diagnosis for coding agents."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
