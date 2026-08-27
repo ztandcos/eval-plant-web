@@ -95,3 +95,7 @@ SQLite schema 升至 6，在现有 `trajectories=Trial` 和 `base_task_id=Task` 
 `report` 现在同时统计逻辑 Task、Trial、trial pass rate、Task 至少一次成功率、Task 全部 Trial 稳定成功率和加权 Check 通过率，并在机器报告中逐 Trial 导出 Outcome 与 Checks。新增 `compare` 命令，只比较两个实验共有且双方至少有 k 次 Trial 的 Task，计算经验 pass@k、pass^k、成本和 Agent 耗时变化，列出 improved/regressed/unchanged；存在回归、pass@k 下降或平均成本上涨超过阈值时 Ship Gate 失败。
 
 项目版本升级为 0.5.0。真实 RootSE 与 thinking 配对结果的脱敏摘要进入 `reports/`，仓库外不再是唯一证据。EvalPlant 自动测试增至 24 项并通过；Web UI、在线业务指标、PostgreSQL 和全量 150-task suite 仍按明确边界不实现。
+
+## 2026-08-27：Harbor 内部化，bench 成为主命令
+
+Harbor 作为项目内部执行引擎保留，但不向用户暴露 Harbor CLI。`evalplant bench` 用 `--agent` / `--bench` / `--task` / `--sandbox` / `--k` / `--concurrency` 生成 JobConfig，优先使用项目内已打补丁的 Harbor，密钥只以 `${ENV}` 模板传递。命令持续消费 Trial 生命周期事件；每个 Verifier 失败结果落盘后立即导入和归因，全部 Trial 结束后输出统一报告。对于只产生 `result.json`、没有 ATIF 的 Agent，系统仍保存 Outcome/Check；失败时返回 `UNDETERMINED / trajectory_unavailable`，不把缺失轨迹冒充诊断服务异常。原有 `run` / `import` / `observe` 等命令继续用于已有轨迹和排障。EvalPlant 自动测试增至 34 项。

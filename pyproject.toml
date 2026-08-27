@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evalplant"
-version = "0.5.0"
+version = "0.6.0"
 description = "Outcome-first offline evaluation and diagnosis for coding agents"
 requires-python = ">=3.9"
 dependencies = [

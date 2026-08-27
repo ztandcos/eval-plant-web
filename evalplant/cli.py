@@ -12,6 +12,16 @@ from rich.table import Table
 from rich.text import Text
 
 from . import __version__
+from .harbor_adapter import (
+    AGENT_ALIASES,
+    SANDBOXES,
+    build_job_config,
+    default_job_name,
+    find_harbor_binary,
+    job_dir_from_config,
+    launch_harbor,
+    write_job_config,
+)
 from .db import (
     connect,
     diagnosable_trajectories,
@@ -25,7 +35,12 @@ from .db import (
     sync_execution_events,
 )
 from .evaluation import evaluate, read_jsonl, read_predictions
-from .judge import DEFAULT_MAX_INPUT_TOKENS, analyze_trajectory, failed_diagnosis
+from .judge import (
+    DEFAULT_MAX_INPUT_TOKENS,
+    analyze_trajectory,
+    failed_diagnosis,
+    unavailable_trajectory_diagnosis,
+)
 from .metrics import compare_experiments, report
 
 console = Console()
@@ -208,17 +223,20 @@ def _diagnose_trajectory(
     model: str,
     max_input_tokens: int,
 ) -> Dict[str, Any]:
-    try:
-        result = analyze_trajectory(
-            Path(trajectory["raw_path"]),
-            trajectory["verdict"],
-            trajectory["health_status"],
-            _read_optional(trajectory["final_log_path"]),
-            model,
-            max_input_tokens,
-        )
-    except Exception as error:
-        result = failed_diagnosis(error, model, max_input_tokens)
+    if trajectory["source_schema_version"] == "harbor-result-v1":
+        result = unavailable_trajectory_diagnosis(model, max_input_tokens)
+    else:
+        try:
+            result = analyze_trajectory(
+                Path(trajectory["raw_path"]),
+                trajectory["verdict"],
+                trajectory["health_status"],
+                _read_optional(trajectory["final_log_path"]),
+                model,
+                max_input_tokens,
+            )
+        except Exception as error:
+            result = failed_diagnosis(error, model, max_input_tokens)
     save_diagnosis(connection, trajectory["id"], result)
     return result
 
@@ -725,6 +743,135 @@ def run_pipeline(
     return payload
 
 
+def _parse_agent_kwargs(items: Optional[List[str]]) -> Dict[str, str]:
+    parsed: Dict[str, str] = {}
+    for item in items or []:
+        if "=" not in item:
+            raise ValueError("Invalid --agent-kwarg %r; expected key=value" % item)
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError("Invalid --agent-kwarg %r; empty key" % item)
+        parsed[key] = value
+    return parsed
+
+
+def _wait_for_live_job(process: Any, job_dir: Path, poll_seconds: float) -> bool:
+    interval = min(max(poll_seconds, 0.05), 0.5)
+    while process.poll() is None:
+        if _looks_live(job_dir):
+            return True
+        time.sleep(interval)
+    return _looks_live(job_dir)
+
+
+def command_bench(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    if args.list:
+        agent_table = Table("Alias", "Harbor agent")
+        for alias, spec in sorted(AGENT_ALIASES.items()):
+            agent_table.add_row(alias, spec["name"])
+        console.print(Panel(agent_table, title="Agents"))
+        console.print("Sandboxes: %s" % ", ".join(sorted(SANDBOXES)))
+        console.print(
+            "Benches: pass a local task directory or a Harbor dataset name "
+            "(for example terminal-bench)."
+        )
+        return
+    k = args.k
+    concurrency = args.concurrency
+    if k < 1:
+        raise ValueError("--k must be >= 1")
+    if concurrency < 1:
+        raise ValueError("--concurrency must be >= 1")
+    experiment = args.experiment or default_job_name()
+    jobs_dir = _path(args.jobs_dir) if args.jobs_dir else _path(args.db).parent / "jobs"
+    config = build_job_config(
+        agents=args.agents or [],
+        benches=args.benches or [],
+        sandbox=args.sandbox,
+        k=k,
+        concurrency=concurrency,
+        job_name=experiment,
+        jobs_dir=jobs_dir,
+        model=args.agent_model,
+        tasks=args.tasks or None,
+        env_names=args.env or None,
+        agent_kwargs=_parse_agent_kwargs(args.agent_kwarg),
+        force_build=args.force_build,
+    )
+    config_path = write_job_config(
+        config, jobs_dir / ("%s.evalplant.json" % experiment)
+    )
+    console.print("Job config: [bold]%s[/bold]" % config_path)
+    if args.print_config:
+        console.print(json.dumps(config, ensure_ascii=False, indent=2))
+        return
+    job_dir = job_dir_from_config(config)
+    binary = Path(args.harbor) if args.harbor else find_harbor_binary()
+    console.print(
+        "Launching [bold]%s[/bold] × [bold]%s[/bold] in %s"
+        % (", ".join(args.agents), ", ".join(args.benches), args.sandbox)
+    )
+    process = launch_harbor(config_path, binary=binary)
+    output = (
+        _path(args.output)
+        if args.output
+        else _path(args.db).parent / ("%s-report.json" % experiment)
+    )
+    gold = _path(args.gold) if args.gold else None
+    try:
+        live = _wait_for_live_job(process, job_dir, args.poll_seconds)
+        if live:
+            run_pipeline(
+                connection,
+                job_dir,
+                experiment,
+                args.model,
+                args.max_input_tokens,
+                args.force,
+                False,
+                output,
+                gold,
+                args.poll_seconds,
+                args.lost_after_seconds,
+            )
+            if process.poll() is None:
+                status = execution_status(
+                    connection, experiment, args.lost_after_seconds
+                )
+                if not _job_complete(status):
+                    process.terminate()
+        code = process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        process.wait()
+        raise
+    traces = list(job_dir.rglob("result.json")) if job_dir.exists() else []
+    if code != 0 and not traces:
+        raise RuntimeError(
+            "Harbor exited with code %s and wrote no trial results in %s"
+            % (code, job_dir)
+        )
+    if code != 0:
+        console.print(
+            "[yellow]Harbor exited %s; importing available trials[/yellow]" % code
+        )
+    if not live:
+        run_pipeline(
+            connection,
+            job_dir,
+            experiment,
+            args.model,
+            args.max_input_tokens,
+            args.force,
+            True,
+            output,
+            gold,
+            args.poll_seconds,
+            args.lost_after_seconds,
+        )
+
+
 def command_run(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
     if args.poll_seconds < 0:
         raise ValueError("--poll-seconds must be >= 0")
@@ -795,11 +942,82 @@ def _add_run_flags(sub: argparse.ArgumentParser, include_once: bool) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="evalplant",
-        description="Outcome-first offline evaluation and diagnosis for coding agents",
+        description=(
+            "Outcome-first evaluation: bench launches Harbor internally; "
+            "run / diagnose / report stay available for traces you already have"
+        ),
     )
     root.add_argument("--version", action="version", version=__version__)
     root.add_argument("--db", default=os.getenv("EVALPLANT_DB", "data/evalplant.db"))
     commands = root.add_subparsers(dest="command", required=True)
+
+    sub = commands.add_parser(
+        "bench",
+        help="One command: choose agent, bench, and sandbox; Harbor runs, then diagnose",
+    )
+    sub.add_argument(
+        "--agent",
+        dest="agents",
+        action="append",
+        help="Agent alias or Harbor agent name (repeatable)",
+    )
+    sub.add_argument(
+        "--bench",
+        dest="benches",
+        action="append",
+        help="Local task directory or Harbor dataset name (repeatable)",
+    )
+    sub.add_argument(
+        "--task",
+        dest="tasks",
+        action="append",
+        help="Optional task name or glob applied to every bench",
+    )
+    sub.add_argument("--sandbox", default="docker", help="Harbor environment type")
+    sub.add_argument("--k", type=int, default=1, help="Attempts per task")
+    sub.add_argument("--concurrency", type=int, default=4, help="Concurrent trials")
+    sub.add_argument("--experiment", help="Job and experiment name")
+    sub.add_argument(
+        "--jobs-dir", help="Where Harbor writes jobs (default: <db-dir>/jobs)"
+    )
+    sub.add_argument(
+        "--agent-model",
+        help="Model for every agent (for example deepseek/deepseek-v4-flash)",
+    )
+    sub.add_argument(
+        "--agent-kwarg",
+        action="append",
+        help="Agent kwarg key=value, applied to every agent",
+    )
+    sub.add_argument(
+        "--env",
+        action="append",
+        help="Host env var to inject as ${NAME}; never copied as a secret value",
+    )
+    sub.add_argument("--force-build", action="store_true")
+    sub.add_argument("--harbor", help="Path to the harbor binary")
+    sub.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Write and print the Harbor job JSON, then exit",
+    )
+    sub.add_argument(
+        "--list",
+        action="store_true",
+        help="List agent aliases and sandboxes, then exit",
+    )
+    sub.add_argument(
+        "--model",
+        default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro"),
+        help="Judge model used as each failed trial finishes",
+    )
+    sub.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
+    sub.add_argument("--force", action="store_true")
+    sub.add_argument("--gold", help="Optional gold JSONL after the report")
+    sub.add_argument("--output", help="Write the JSON report to this path")
+    sub.add_argument("--poll-seconds", type=float, default=3.0)
+    sub.add_argument("--lost-after-seconds", type=int, default=90)
+    sub.set_defaults(handler=command_bench)
 
     sub = commands.add_parser(
         "run",

@@ -1,6 +1,14 @@
 # EvalPlant
 
-EvalPlant 是面向 Coding Agent 的 Outcome-first 离线评测与诊断后台。Harbor 与 DeepSeek Harness 在隔离容器中执行 Benchmark；EvalPlant 统一保存逻辑 Task、多次 Trial、真实 Outcome 和确定性 Check，比较 Agent 版本，并对失败轨迹区分 Harness 故障与 LLM 行为错误。
+```text
+Agent × Bench × Sandbox
+        ↓  evalplant bench
+Harbor（项目内部执行引擎，用户不直接操作）
+        ↓  ATIF + Outcome
+EvalPlant 导入 / 归因 / report
+```
+
+EvalPlant 是面向 Coding Agent 的 Outcome-first 离线评测与诊断后台。多 Agent、多 Bench 通过 EvalPlant 自己的参数接入 Harbor；用户不执行 `harbor run`。Harbor 在隔离环境中执行任务后，EvalPlant 统一保存逻辑 Task、多次 Trial、真实 Outcome 和确定性 Check，比较 Agent 版本，并对失败轨迹区分 Harness 故障与 LLM 行为错误。
 
 ```text
 Benchmark Task → Harbor + DSH → 多次 Trial
@@ -35,50 +43,60 @@ Judge 默认输出上限为 4096 token、thinking 关闭、temperature 为 0；�
 ## 项目结构
 
 ```text
-/Users/shaw/eval-plant
-├── harbor/                         # 忽略提交的 Harbor 工作副本
-├── integrations/harbor-patches/   # 可在干净 Harbor 上重放的 4 个补丁
-├── evalplant/
-│   ├── cli.py                      # run / diagnose / observe / import / inspect / analyze / report
-│   ├── core.py                     # schema、脱敏、标准化、结构索引
-│   ├── db.py                       # Task/Trial/Outcome/Check、导入和 attempt 状态
-│   ├── judge.py                    # 规则、短长轨迹 Judge、证据校验
-│   ├── metrics.py                  # pass@k、pass^k、版本比较、成本和诊断统计
-│   └── evaluation.py               # 人工金标准确率与重复运行稳定性
-├── scripts/prepare_tracebench.py  # 下载公开失败轨迹到本地忽略目录
-├── scripts/prepare_rootse.py      # 转换 RootSE 轨迹与独立人工根因标签
-├── reports/                       # 可提交的脱敏真实实验摘要
-├── examples/demo-job/              # 无 Key 的确定性演示
-├── tests/                           # 不调用付费 API 的自动测试
-├── DIAGNOSIS_SPEC.md                # 诊断规约 v3
-├── SQLITE_DATA_DICTIONARY.md        # 8 张表逐字段说明
-├── DELIVERY.md                      # 交付状态、证据和诚实边界
-└── PROJECT_LOG.md                   # 持续维护记录
+evalplant/
+│   ├── cli.py
+│   ├── harbor_adapter.py
+│   ├── core.py
+│   ├── db.py
+│   ├── judge.py
+│   ├── metrics.py
+│   └── evaluation.py
+├── integrations/harbor-patches/
+├── harbor/                         # 内部执行引擎，已应用 4 个补丁，gitignored
+├── scripts/
+├── reports/
+├── examples/demo-job/
+├── tests/
+└── PROJECT_LOG.md
 ```
 
 ## 完整运行
 
-先安装并跑无 Key 演示。一条命令会导入轨迹、诊断失败、写出报告：
+当前 `dsh-minimal` 依赖四个 Harbor 补丁。EvalPlant 会优先使用项目内已打补丁的 `harbor/.venv/bin/harbor`；也可用 `EVALPLANT_HARBOR` 显式指定另一个已打补丁二进制，最后才使用 PATH 上的 Harbor。
 
 ```bash
 cd /Users/shaw/eval-plant
 uv sync
+# 可选：export EVALPLANT_HARBOR=/path/to/patched/harbor
+```
 
+主命令只描述评测矩阵：
+
+```bash
+uv run evalplant bench \
+  --agent dsh \
+  --bench terminal-bench \
+  --sandbox docker \
+  --k 3 \
+  --concurrency 4
+```
+
+重复 `--agent` / `--bench` 可做矩阵。本地题集传目录，远程题集传数据集名。`--print-config` 只生成 Job JSON；`--list` 查看别名。Harbor 在内部为每个 Trial 运行 Verifier；失败结果一落盘就进入归因，整批结束后同一条命令输出总报告。没有 ATIF 的 Agent 仍保存 Outcome 和 Check，失败时明确标记 `UNDETERMINED / trajectory_unavailable`，不会伪造根因。
+
+无 Key 离线演示：
+
+```bash
 DEMO_DB=/tmp/evalplant-demo.db
 uv run evalplant --db "$DEMO_DB" run examples/demo-job \
   --experiment demo --model not-called
 ```
 
-已结束的轨迹目录（demo、RootSE cases、Harbor job）同样用 `run`；带 `execution-events.jsonl` 且仍有未完成 trial 的 Harbor job 会轮询，失败立刻归因并刷新报告。Ctrl+C 会保留最新报告。不要用 EvalPlant 去启动 Harbor 或 Agent。
+已有轨迹仍可用 `run`。live job 带 `execution-events.jsonl` 时会边跑边归因。
 
 ```bash
-# 直播：只看 Harbor 已经写出的事件和轨迹
-uv run evalplant run harbor/jobs/JOB_NAME --model deepseek-v4-pro
-
-# 已导入的实验名也可以再跑一遍（不会监视）
+uv run evalplant run data/jobs/JOB_NAME --model deepseek-v4-pro
 uv run evalplant run JOB_NAME --once
 ```
-
 需要拆开步骤时仍可用旧命令：
 
 ```bash
@@ -86,7 +104,7 @@ uv run evalplant import examples/demo-job --experiment demo
 uv run evalplant analyze --experiment demo --model not-called
 uv run evalplant inspect TRAJECTORY_ID
 uv run evalplant report --experiment demo --output /tmp/evalplant-demo-report.json
-uv run evalplant observe harbor/jobs/JOB_NAME --experiment JOB_NAME
+uv run evalplant observe data/jobs/JOB_NAME --experiment JOB_NAME
 
 # 相同 Task 在两个 Agent 版本中各跑 k 次后做配对比较
 uv run evalplant compare \
@@ -111,10 +129,6 @@ uv run python -m evalplant.evaluation \
 
 ```bash
 uv run python -m unittest discover -s tests -v
-harbor/.venv/bin/python -m pytest \
-  harbor/tests/unit/agents/installed/test_dsh_minimal.py \
-  harbor/tests/unit/test_job_status.py \
-  harbor/tests/unit/test_trial_queue_integration.py -q
 ```
 
-当前自动化代码验收为 EvalPlant 24 项、Harbor 相关 71 项（DSH 适配器 9 项、状态与队列 62 项）。公开 RootSE 的 102 条人工标注失败轨迹已完成真实验收：系统链路可运行、可审计，但最早根因步骤精确命中仅 16/102，因此不宣称高准确率。脱敏结果见 `reports/`；RootSE 没有 EvalPlant L1-L4 人工类别标签，所以类别分布只用于工程观察，不冒充类别准确率。
+EvalPlant 自动测试覆盖 bench 配置生成、实时失败归因、Outcome-only Agent 和最终报告；Harbor 补丁测试验证 DSH 适配、状态事件与隔离重试。公开 RootSE 的 102 条人工标注失败轨迹已完成真实验收：系统链路可运行、可审计，但最早根因步骤精确命中仅 16/102，因此不宣称高准确率。脱敏结果见 `reports/`。

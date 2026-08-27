@@ -193,6 +193,60 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(result["matched_rule"], "missing_tool_result")
             connection.close()
 
+    def test_harbor_result_without_trajectory_is_undetermined(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trial = root / "job" / "hello__trial"
+            (trial / "agent").mkdir(parents=True)
+            (trial / "result.json").write_text(
+                json.dumps(
+                    {
+                        "id": "outcome-only-1",
+                        "task_name": "demo/hello",
+                        "trial_name": "hello__trial",
+                        "agent_info": {"name": "oracle", "version": "1.0.0"},
+                        "agent_result": {},
+                        "verifier_result": {"rewards": {"reward": 0.0}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, root / "job", "outcome-only")[0]
+            row = connection.execute(
+                "SELECT verdict, source_schema_version FROM trajectories WHERE id=?",
+                (trajectory_id,),
+            ).fetchone()
+            self.assertEqual(
+                dict(row),
+                {
+                    "verdict": "FAIL",
+                    "source_schema_version": "harbor-result-v1",
+                },
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM steps WHERE trajectory_id=?",
+                    (trajectory_id,),
+                ).fetchone()[0],
+                0,
+            )
+            output = root / "outcome-only-report.json"
+            payload = run_pipeline(
+                connection,
+                root / "job",
+                "outcome-only",
+                "not-called",
+                once=True,
+                output=output,
+            )
+            diagnosis = payload["diagnoses"][0]["diagnosis"]
+            self.assertEqual(diagnosis["status"], "UNDETERMINED")
+            self.assertEqual(
+                diagnosis["matched_rule"], "trajectory_unavailable"
+            )
+            connection.close()
+
     def test_database_has_evaluation_tables(self):
         with tempfile.TemporaryDirectory() as temp:
             connection = connect(Path(temp) / "evalplant.db")
@@ -550,6 +604,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(
             set(choices),
             {
+                "bench",
                 "run",
                 "diagnose",
                 "import",

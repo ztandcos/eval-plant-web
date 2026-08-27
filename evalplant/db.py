@@ -329,6 +329,11 @@ def _trajectory_paths(path: Path) -> List[Path]:
         return [path]
     paths = set(path.rglob("*.traj.json"))
     paths.update(path.rglob("trajectory.json"))
+    for result_path in path.rglob("result.json"):
+        trial_dir = result_path.parent
+        agent_dir = trial_dir / "agent"
+        if agent_dir.is_dir() and not any(agent_dir.rglob("trajectory.json")):
+            paths.add(result_path)
     return sorted(item for item in paths if "_retries" not in item.parts)
 
 
@@ -706,8 +711,10 @@ def _duration_seconds(value: Any) -> Optional[float]:
     return max(0.0, (finish - start).total_seconds())
 
 
-def _atif_metadata(raw_path: Path, data: Dict[str, Any]) -> Dict[str, Any]:
-    trial_dir = raw_path.parent.parent
+def _atif_metadata(
+    raw_path: Path, data: Dict[str, Any], trial_dir: Optional[Path] = None
+) -> Dict[str, Any]:
+    trial_dir = trial_dir or raw_path.parent.parent
     result_path = trial_dir / "result.json"
     result = read_json(result_path) if result_path.exists() else {}
     exception = result.get("exception_info") or {}
@@ -900,14 +907,25 @@ def import_run(
     trajectory_ids = []
     for raw_path in _trajectory_paths(path):
         data = read_json(raw_path)
-        steps = normalize_trajectory(data)
-        source_schema_version = validate_trajectory_schema(data)
-        is_atif = source_schema_version is not None
-        metadata = (
-            _atif_metadata(raw_path, data)
-            if is_atif
-            else _legacy_metadata(raw_path, data)
+        is_harbor_result = bool(
+            raw_path.name == "result.json"
+            and data.get("trial_name")
+            and isinstance(data.get("verifier_result"), dict)
         )
+        if is_harbor_result:
+            steps = []
+            source_schema_version = "harbor-result-v1"
+            metadata = _atif_metadata(raw_path, {}, raw_path.parent)
+            is_atif = False
+        else:
+            steps = normalize_trajectory(data)
+            source_schema_version = validate_trajectory_schema(data)
+            is_atif = source_schema_version is not None
+            metadata = (
+                _atif_metadata(raw_path, data)
+                if is_atif
+                else _legacy_metadata(raw_path, data)
+            )
         existing = connection.execute(
             "SELECT id, raw_sha256 FROM trajectories WHERE experiment_id=? AND task_id=?",
             (experiment_id, metadata["storage_task_id"]),

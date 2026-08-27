@@ -560,6 +560,27 @@ def failed_diagnosis(
     }
 
 
+def unavailable_trajectory_diagnosis(
+    model: Optional[str] = None,
+    max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
+) -> Dict[str, Any]:
+    result = failed_diagnosis(
+        ValueError("Agent produced an outcome but no diagnostic trajectory"),
+        model,
+        max_input_tokens,
+    )
+    result.update(
+        status="UNDETERMINED",
+        summary="Verifier 已确认任务失败，但 Agent 没有产出可供归因的轨迹。",
+        decision_source="RULE",
+        matched_rule="trajectory_unavailable",
+        judge_thinking="not_called",
+        trajectory_mode="OUTCOME_ONLY",
+    )
+    result.pop("diagnosis_error", None)
+    return result
+
+
 def _judge_payload(
     verdict: str,
     facts: Dict[str, Any],
