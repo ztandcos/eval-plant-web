@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/config-validate"
+name = "evalplat/config-validate"
 version = "1.0.0"
 description = "Write a config that passes the bundled validator before finishing"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "medium"

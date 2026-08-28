@@ -1,9 +1,9 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/smoke-file"
+name = "evalplat/smoke-file"
 version = "1.0.0"
-description = "Deterministic no-network smoke task for EvalPlant"
+description = "Deterministic no-network smoke task for EvalPlat"
 authors = []
 keywords = ["smoke"]
 

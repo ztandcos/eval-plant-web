@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/needle-context"
+name = "evalplat/needle-context"
 version = "1.0.0"
 description = "Recover a hidden token from a long instruction"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "medium"

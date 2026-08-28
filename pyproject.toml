@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "evalplant"
+name = "evalplat"
 version = "0.7.0"
 description = "Outcome-first offline evaluation and diagnosis for coding agents"
 requires-python = ">=3.9"
@@ -15,10 +15,11 @@ dependencies = [
 ]
 
 [project.scripts]
-evalplant = "evalplant.cli:main"
+evalplat = "evalplat.cli:main"
+evalplant = "evalplat.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["evalplant*"]
+include = ["evalplat*"]
 
 [tool.setuptools.package-data]
-evalplant = ["diagnosis_prompt.txt"]
+evalplat = ["diagnosis_prompt.txt"]

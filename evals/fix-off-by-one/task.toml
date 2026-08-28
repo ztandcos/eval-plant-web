@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/fix-off-by-one"
+name = "evalplat/fix-off-by-one"
 version = "1.0.0"
 description = "Fix an off-by-one bug in a Python sum helper"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "easy"

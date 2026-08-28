@@ -23,15 +23,15 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --python 3.12
       - run: uv sync --project harbor --python 3.12 --no-dev
-      - name: Restore production baseline
+      - name: Restore eval cache
         uses: actions/cache/restore@v4
         with:
           path: |
-            data/ci-evalplant.db
+            data/ci-evalplat.db
             reports/ci/
-          key: evalplant-baseline-${{ github.run_id }}
+          key: evalplat-${{ github.run_id }}
           restore-keys: |
-            evalplant-baseline-
+            evalplat-
       - name: Choose suite
         id: suite
         run: |
@@ -45,15 +45,15 @@ jobs:
       - name: Run suite
         run: |
           mkdir -p reports/ci data
-          uv run evalplant --db data/ci-evalplant.db eval "${{ steps.suite.outputs.name }}" --output-dir reports/ci
-      - name: Save production baseline
+          uv run evalplat --db data/ci-evalplat.db eval "${{ steps.suite.outputs.name }}" --output-dir reports/ci
+      - name: Save eval cache
         if: always() && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: |
-            data/ci-evalplant.db
+            data/ci-evalplat.db
             reports/ci/
-          key: evalplant-baseline-${{ github.run_id }}
+          key: evalplat-${{ github.run_id }}
       - name: Comment on pull request
         if: github.event_name == 'pull_request' && always()
         env:
@@ -66,9 +66,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: evalplant-baseline-and-reports
+          name: evalplat-reports
           path: |
-            data/ci-evalplant.db
+            data/ci-evalplat.db
             reports/ci/
           if-no-files-found: ignore
           retention-days: 90

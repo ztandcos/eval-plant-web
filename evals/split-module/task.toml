@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/split-module"
+name = "evalplat/split-module"
 version = "1.0.0"
 description = "Extract a helper into util.py and import it"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "medium"

@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/fix-and-prove"
+name = "evalplat/fix-and-prove"
 version = "1.0.0"
 description = "Fix a calculator and prove it by running the local tests"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "medium"

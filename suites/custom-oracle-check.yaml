@@ -1,11 +1,7 @@
 suite: custom-oracle-check
 
-baseline:
-  name: oracle
-  agent: oracle
-
-candidates:
-  - name: oracle-repeat
+agents:
+  - name: oracle
     agent: oracle
 
 benchmarks:
@@ -26,9 +22,17 @@ trials: 1
 concurrency: 4
 sandbox: docker
 metrics: [pass@1]
-judge_model: not-called
+
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: not-called
+
+recovery:
+  max_infra_retries: 1
+  max_job_resumes: 1
 
 gate:
+  k: 1
   pass_at_1_drop: 0.0
   max_regressions: 0
   cost_increase: 1.0

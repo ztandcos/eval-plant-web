@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/http-echo"
+name = "evalplat/http-echo"
 version = "1.0.0"
 description = "Start an HTTP health server and keep it running"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "medium"

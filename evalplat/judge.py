@@ -28,9 +28,9 @@ PROMPT_PATH = Path(__file__).with_name("diagnosis_prompt.txt")
 PROMPT_VERSION = "engineering_diagnosis_v3"
 RULE_VERSION = "harness_rules_v2"
 DEFAULT_MAX_INPUT_TOKENS = 100_000
-DEFAULT_MAX_OUTPUT_TOKENS = int(os.getenv("EVALPLANT_JUDGE_MAX_OUTPUT_TOKENS", "4096"))
-THINKING_CONFIG = os.getenv("EVALPLANT_JUDGE_THINKING", "disabled")
-REASONING_EFFORT = os.getenv("EVALPLANT_JUDGE_REASONING_EFFORT", "high")
+DEFAULT_MAX_OUTPUT_TOKENS = int(os.getenv("EVALPLAT_JUDGE_MAX_OUTPUT_TOKENS", "4096"))
+THINKING_CONFIG = os.getenv("EVALPLAT_JUDGE_THINKING", "disabled")
+REASONING_EFFORT = os.getenv("EVALPLAT_JUDGE_REASONING_EFFORT", "high")
 THINKING_LABEL = (
     "%s:%s" % (THINKING_CONFIG, REASONING_EFFORT)
     if THINKING_CONFIG == "enabled"
@@ -215,30 +215,6 @@ def match_harness_rule(facts: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "context_truncation_recorded",
             "运行记录明确显示上下文被截断。",
             _rule_evidence("trajectory_or_log", quote, "存在明确截断标记。"),
-            facts,
-        )
-
-    if facts["health_status"] == "INCOMPLETE":
-        return _rule_report(
-            "H-L",
-            "run_lifecycle",
-            "run_incomplete",
-            "任务运行没有完成生命周期，也没有产生完整结果。",
-            _rule_evidence(
-                "database", "health_status=INCOMPLETE", "导入记录标记运行不完整。"
-            ),
-            facts,
-        )
-
-    if facts["verdict"] == "UNKNOWN" and not facts["verifier_present"]:
-        return _rule_report(
-            "H-V",
-            "verifier",
-            "verifier_missing",
-            "任务没有可用的 Verifier 结果，无法判断是否完成。",
-            _rule_evidence(
-                "result.json", "verifier_result missing", "结果文件缺少 Verifier 结论。"
-            ),
             facts,
         )
 
@@ -588,6 +564,21 @@ def unavailable_trajectory_diagnosis(
     return result
 
 
+def undetermined_sparse_diagnosis(
+    verdict: str,
+    model: Optional[str] = None,
+    max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
+) -> Dict[str, Any]:
+    result = unavailable_trajectory_diagnosis(model, max_input_tokens)
+    if verdict == "INCOMPLETE":
+        result["summary"] = "评测中断且缺少最终 Verifier 结论，证据不足。"
+        result["matched_rule"] = "insufficient_evidence"
+    elif verdict == "UNKNOWN":
+        result["summary"] = "Agent 已结束，但 Verifier 的 reward 或 Check 缺失，证据不足。"
+        result["matched_rule"] = "insufficient_evidence"
+    return result
+
+
 def diagnose_outcome_only(
     raw_path: Path,
     verdict: str,
@@ -608,6 +599,8 @@ def diagnose_outcome_only(
             payload = read_json(alternative)
             result_path = alternative
     exception = payload.get("exception_info") or {}
+    if verdict in {"UNKNOWN", "INCOMPLETE"} or health_status == "INCOMPLETE":
+        return undetermined_sparse_diagnosis(verdict, model, max_input_tokens)
     if health_status == "INFRA_ERROR" or verdict == "INFRA_ERROR":
         facts = {
             "verdict": verdict,
@@ -768,6 +761,11 @@ def analyze_trajectory(
     facts = runtime_facts(raw_path, verdict, health_status, final_log, steps)
     structured = structured_failure_facts(steps, facts, final_log)
     config_hash = diagnosis_config_hash(model, max_input_tokens)
+    if verdict in {"UNKNOWN", "INCOMPLETE"} or health_status == "INCOMPLETE":
+        result = undetermined_sparse_diagnosis(verdict, model, max_input_tokens)
+        result["structured_failure_facts"] = structured
+        result["runtime_facts"] = facts
+        return result
     ruled = match_harness_rule(facts)
     if ruled:
         ruled["max_input_tokens"] = max_input_tokens

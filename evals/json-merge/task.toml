@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/json-merge"
+name = "evalplat/json-merge"
 version = "1.0.0"
 description = "Merge two JSON objects into one output file"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "easy"

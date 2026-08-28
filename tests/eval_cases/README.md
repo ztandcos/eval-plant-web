@@ -7,10 +7,10 @@ Evidence support is prediction-specific, so record it separately in `evidence-re
 Run:
 
 ```bash
-uv run python -m evalplant.evaluation \
+uv run python -m evalplat.evaluation \
   --gold tests/eval_cases/gold.jsonl \
   --predictions reports/run-a.json reports/run-b.json \
   --reviews tests/eval_cases/evidence-reviews.jsonl
 ```
 
-The output separates coverage from selective accuracy so abstention cannot inflate the headline score, and reports repeated-run exact agreement. Public raw artifacts remain under ignored `data/`. Tracebench source annotations are useful review hints but are not automatically mapped to EvalPlant's Harness/LLM taxonomy.
+The output separates coverage from selective accuracy so abstention cannot inflate the headline score, and reports repeated-run exact agreement. Public raw artifacts remain under ignored `data/`.

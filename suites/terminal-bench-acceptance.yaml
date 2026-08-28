@@ -1,10 +1,8 @@
 suite: terminal-bench-acceptance
 
-baseline:
-  name: oracle
-  agent: oracle
-
-candidates:
+agents:
+  - name: oracle
+    agent: oracle
   - name: dsh-flash
     agent: dsh
     model: deepseek/deepseek-v4-flash
@@ -18,9 +16,21 @@ concurrency: 1
 sandbox: docker
 env: [DEEPSEEK_API_KEY]
 metrics: [pass@1, cost, latency]
-judge_model: deepseek-v4-pro
+
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: deepseek-v4-pro
+
+recovery:
+  max_infra_retries: 1
+  max_job_resumes: 1
+
+comparison:
+  baseline: oracle
+  candidates: [dsh-flash]
 
 gate:
+  k: 1
   pass_at_1_drop: 0.0
   max_regressions: 0
   cost_increase: 0.20

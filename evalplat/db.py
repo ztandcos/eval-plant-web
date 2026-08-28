@@ -4,7 +4,7 @@ import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .core import (
     ADAPTER_VERSION,
@@ -352,7 +352,9 @@ def _trajectory_paths(path: Path) -> List[Path]:
     for result_path in path.rglob("result.json"):
         trial_dir = result_path.parent
         agent_dir = trial_dir / "agent"
-        if agent_dir.is_dir() and not any(agent_dir.rglob("trajectory.json")):
+        if not any(agent_dir.rglob("trajectory.json")) and (
+            agent_dir.is_dir() or read_json(result_path).get("trial_name")
+        ):
             paths.add(result_path)
     return sorted(item for item in paths if "_retries" not in item.parts)
 
@@ -575,6 +577,52 @@ def _task_key(metadata: Dict[str, Any]) -> str:
     )
 
 
+AGENT_TIMEOUT_EXCEPTION = "AgentTimeoutError"
+INFRA_OUTCOME_EXCEPTIONS = frozenset(
+    {
+        "EnvironmentStartTimeoutError",
+        "VerifierTimeoutError",
+        "HealthcheckError",
+        "SandboxBuildFailedError",
+        "NetworkConnectionError",
+        "ApiInternalServerError",
+        "ApiOverloadedError",
+        "ApiConnectionClosedError",
+        "ApiResponseStalledError",
+        "RuntimeError",
+    }
+)
+
+
+def map_trial_outcome(
+    result: Dict[str, Any],
+    checks: Optional[List[Dict[str, Any]]] = None,
+    reward: Optional[float] = None,
+    success_threshold: float = 1.0,
+) -> str:
+    exception = result.get("exception_info") or {}
+    exception_type = str(exception.get("exception_type") or "")
+    verifier = result.get("verifier_result") or {}
+    if exception_type == AGENT_TIMEOUT_EXCEPTION:
+        return "TIMEOUT"
+    if exception_type in INFRA_OUTCOME_EXCEPTIONS:
+        return "INFRA_ERROR"
+    if checks:
+        statuses = {item.get("status") for item in checks}
+        if "FAIL" in statuses:
+            return "FAIL"
+        if statuses == {"PASS"}:
+            return "PASS"
+        return "UNKNOWN"
+    if verifier and reward is not None:
+        return "PASS" if reward >= success_threshold else "FAIL"
+    if result.get("agent_result") is not None or result.get("agent_execution"):
+        return "UNKNOWN"
+    if exception:
+        return "INFRA_ERROR"
+    return "INCOMPLETE"
+
+
 def _evaluation_data(
     verifier: Dict[str, Any], verdict: str, reward: Optional[float]
 ) -> Dict[str, Any]:
@@ -786,31 +834,15 @@ def _atif_metadata(
     reward = sum(values) / len(values) if values else None
     success_threshold = _number(verifier.get("success_threshold"))
     success_threshold = 1.0 if success_threshold is None else success_threshold
-    exception_type = str(exception.get("exception_type") or "")
-    if exception:
-        verdict = "TIMEOUT" if "timeout" in exception_type.lower() else "INFRA_ERROR"
-        health = "VALID" if verdict == "TIMEOUT" else "INFRA_ERROR"
-    elif verifier and reward is not None:
-        verdict, health = (
-            "PASS" if reward >= success_threshold else "FAIL",
-            "VALID",
-        )
-    elif result.get("agent_result"):
-        verdict, health = "UNKNOWN", "VALID"
-    else:
-        verdict, health = "UNKNOWN", "INCOMPLETE"
-    evaluation = _evaluation_data(verifier, verdict, reward)
+    evaluation = _evaluation_data(verifier, "UNKNOWN", reward)
     evaluation["checks"].extend(_ctrf_checks(trial_dir / "verifier" / "ctrf.json"))
     names = [item["name"] for item in evaluation["checks"]]
     if len(names) != len(set(names)):
         raise ValueError("Verifier and CTRF check names must be unique")
-    if verdict == "UNKNOWN" and evaluation["checks"]:
-        statuses = {item["status"] for item in evaluation["checks"]}
-        if "FAIL" in statuses:
-            verdict = "FAIL"
-        elif statuses == {"PASS"}:
-            verdict = "PASS"
-        health = "VALID"
+    verdict = map_trial_outcome(
+        result, evaluation["checks"], reward, success_threshold
+    )
+    health = verdict if verdict in {"INFRA_ERROR", "INCOMPLETE"} else "VALID"
 
     identity = _agent_identity(data, result)
     bench = _bench_identity(data, result, trial_dir.name)
@@ -967,20 +999,14 @@ def import_run(
     path: Path,
     experiment_id: str,
     agent_model: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
 ) -> List[str]:
     ensure_experiment(connection, experiment_id, agent_model)
     trajectory_ids = []
     for raw_path in _trajectory_paths(path):
         data = read_json(raw_path)
-        is_harbor_result = bool(
-            raw_path.name == "result.json"
-            and data.get("trial_name")
-            and (
-                isinstance(data.get("verifier_result"), dict)
-                or data.get("exception_info")
-                or data.get("agent_result") is not None
-            )
-        )
+        is_harbor_result = bool(raw_path.name == "result.json" and data.get("trial_name"))
         if is_harbor_result:
             steps = []
             source_schema_version = "harbor-result-v1"
@@ -995,6 +1021,18 @@ def import_run(
                 if is_atif
                 else _legacy_metadata(raw_path, data)
             )
+        configured_agent = _mapping(_mapping(data.get("config")).get("agent"))
+        actual_agent = _first_text(configured_agent.get("name"), metadata["agent_name"])
+        actual_model = _first_text(
+            configured_agent.get("model_name"), metadata["model_name"]
+        )
+        if agent_name is not None and actual_agent != agent_name:
+            continue
+        if model_name is not None and actual_model not in {
+            model_name,
+            model_name.rsplit("/", 1)[-1],
+        }:
+            continue
         resolved_raw_path = str(raw_path.resolve())
         existing = connection.execute(
             "SELECT * FROM trajectories WHERE experiment_id=? AND task_id=?",

@@ -20,11 +20,11 @@ TASK_TOML = """\
 schema_version = "1.4"
 
 [task]
-name = "evalplant/{name}"
+name = "evalplat/{name}"
 version = "1.0.0"
 description = "{description}"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "{difficulty}"
@@ -440,7 +440,7 @@ PASS=0
     )
     write(
         ROOT / "config-validate" / "solution" / "solve.sh",
-        "#!/bin/sh\ncat > /app/service.conf <<'EOF'\nNAME=evalplant\nPORT=8080\nMODE=prod\nEOF\n"
+        "#!/bin/sh\ncat > /app/service.conf <<'EOF'\nNAME=evalplat\nPORT=8080\nMODE=prod\nEOF\n"
         "python3 /app/validate.py >/dev/null\n",
         0o755,
     )

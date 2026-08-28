@@ -1,11 +1,7 @@
-suite: evalplant-smoke
+suite: evalplat-smoke
 
-baseline:
-  name: oracle-baseline
-  agent: oracle
-
-candidates:
-  - name: oracle-candidate
+agents:
+  - name: oracle
     agent: oracle
 
 benchmarks:
@@ -17,7 +13,16 @@ concurrency: 1
 sandbox: docker
 metrics: [pass@1, cost, latency]
 
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: not-called
+
+recovery:
+  max_infra_retries: 1
+  max_job_resumes: 1
+
 gate:
+  k: 1
   pass_at_1_drop: 0.0
   max_regressions: 0
   cost_increase: 0.20

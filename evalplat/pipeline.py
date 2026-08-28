@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -26,6 +27,7 @@ from .harbor_adapter import (
     find_harbor_binary,
     job_dir_from_config,
     launch_harbor,
+    resolve_agent,
     resolve_bench,
     resume_harbor,
     write_job_config,
@@ -43,8 +45,8 @@ STATES = (
     "RUNNING",
     "COLLECTING",
     "EVALUATING",
-    "COMPARING",
     "DIAGNOSING",
+    "COMPARING",
     "COMPLETED",
 )
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -107,6 +109,7 @@ def _variant(value: Any, label: str) -> Dict[str, Any]:
             "name": name,
             "agent": name,
             "model": None,
+            "n_concurrent": None,
             "agent_kwargs": {},
         }
     if not isinstance(value, dict):
@@ -118,10 +121,14 @@ def _variant(value: Any, label: str) -> Dict[str, Any]:
     kwargs = value.get("agent_kwargs") or {}
     if not isinstance(kwargs, dict):
         raise ValueError("%s.agent_kwargs must be an object" % label)
+    n_concurrent = value.get("n_concurrent")
+    if n_concurrent is not None:
+        n_concurrent = _positive_int(n_concurrent, "%s.n_concurrent" % label)
     return {
         "name": name,
         "agent": agent,
         "model": value.get("model"),
+        "n_concurrent": n_concurrent,
         "agent_kwargs": {str(key): value for key, value in kwargs.items()},
     }
 
@@ -132,9 +139,7 @@ def analyze_regressions(diagnoses: List[Dict[str, Any]]) -> Dict[str, Any]:
     for item in diagnoses:
         diagnosis = item.get("diagnosis") or {}
         code = str(
-            diagnosis.get("category_code")
-            or diagnosis.get("status")
-            or "UNKNOWN"
+            diagnosis.get("category_code") or diagnosis.get("status") or "UNKNOWN"
         )
         clusters[code] += 1
         primary = diagnosis.get("primary_cause") or {}
@@ -162,6 +167,63 @@ def analyze_regressions(diagnoses: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def task_count(config: Mapping[str, Any]) -> int:
+    tasks = 0
+    for benchmark in config["benchmarks"]:
+        selected = benchmark.get("tasks")
+        if isinstance(selected, list):
+            tasks += len(selected)
+        elif isinstance(selected, int):
+            tasks += selected
+    return tasks
+
+
+def planned_trial_count(config: Mapping[str, Any]) -> int:
+    return task_count(config) * int(config["trials"]) * len(config["agents"])
+
+
+def format_suite_config(config: Mapping[str, Any]) -> str:
+    agents = config["agents"]
+    tasks: List[str] = []
+    for benchmark in config["benchmarks"]:
+        selected = benchmark.get("tasks")
+        if isinstance(selected, list):
+            tasks.extend(str(item) for item in selected)
+    concurrent = [
+        item["n_concurrent"] for item in agents if item.get("n_concurrent") is not None
+    ]
+    if concurrent and len(set(concurrent)) == 1:
+        per_agent = str(concurrent[0])
+    elif concurrent:
+        per_agent = ", ".join(
+            "%s=%s" % (item["name"], item["n_concurrent"] or "global")
+            for item in agents
+        )
+    else:
+        per_agent = "global"
+    comparison = config.get("comparison")
+    if comparison:
+        comparison_line = "comparison: %s -> %s" % (
+            comparison["baseline"],
+            ", ".join(comparison["candidates"]),
+        )
+    else:
+        comparison_line = "comparison: none"
+    return (
+        "\n".join(
+            [
+                "planned trials: %s" % planned_trial_count(config),
+                "agents: %s" % ", ".join(item["name"] for item in agents),
+                "tasks: %s" % ", ".join(tasks),
+                "global concurrency: %s" % config["concurrency"],
+                "per-agent concurrency: %s" % per_agent,
+                comparison_line,
+            ]
+        )
+        + "\n"
+    )
+
+
 def load_suite(path: Path) -> Dict[str, Any]:
     path = Path(path).expanduser().resolve()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -171,33 +233,21 @@ def load_suite(path: Path) -> Dict[str, Any]:
     if not name:
         raise ValueError("Suite requires a non-empty suite name")
     raw_agents = data.get("agents")
-    raw_baseline = data.get("baseline")
-    raw_candidates = data.get("candidates")
-    if raw_agents is not None:
-        if raw_baseline is not None or raw_candidates is not None:
-            raise ValueError("Use either agents: or baseline/candidates, not both")
-        if not isinstance(raw_agents, list) or not raw_agents:
-            raise ValueError("agents must be a non-empty list")
-        parsed = [
-            _variant(item, "agents[%s]" % index)
-            for index, item in enumerate(raw_agents)
-        ]
-        if len(parsed) < 2:
-            raise ValueError("agents: needs at least two entries (baseline then candidates)")
-        baseline, candidates = parsed[0], parsed[1:]
-    else:
-        if raw_baseline is None:
-            raise ValueError("Suite requires baseline or agents")
-        baseline = _variant(raw_baseline, "baseline")
-        if not isinstance(raw_candidates, list) or not raw_candidates:
-            raise ValueError("Suite requires at least one candidate")
-        candidates = [
-            _variant(item, "candidates[%s]" % index)
-            for index, item in enumerate(raw_candidates)
-        ]
-    names = [baseline["name"]] + [item["name"] for item in candidates]
+    if not isinstance(raw_agents, list) or not raw_agents:
+        raise ValueError("agents must contain at least one entry")
+    agents = [
+        _variant(item, "agents[%s]" % index) for index, item in enumerate(raw_agents)
+    ]
+    names = [item["name"] for item in agents]
     if len(names) != len(set(names)):
-        raise ValueError("Baseline and candidate names must be unique")
+        raise ValueError("Agent names must be unique")
+    identities = [
+        (resolved["name"], resolved.get("model_name"))
+        for item in agents
+        for resolved in [resolve_agent(item["agent"], item.get("model"))]
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("Each agent must have a distinct Harbor agent/model identity")
 
     raw_benchmarks = data.get("benchmarks")
     if not isinstance(raw_benchmarks, list) or not raw_benchmarks:
@@ -230,8 +280,15 @@ def load_suite(path: Path) -> Dict[str, Any]:
 
     trials = _positive_int(data.get("trials", 1), "trials")
     concurrency = _positive_int(data.get("concurrency", 4), "concurrency")
+    if any(
+        item["n_concurrent"] is not None and item["n_concurrent"] > concurrency
+        for item in agents
+    ):
+        raise ValueError("Agent n_concurrent cannot exceed global concurrency")
     metrics = data.get("metrics") or ["pass@1", "cost", "latency"]
-    if not isinstance(metrics, list) or not all(isinstance(item, str) for item in metrics):
+    if not isinstance(metrics, list) or not all(
+        isinstance(item, str) for item in metrics
+    ):
         raise ValueError("metrics must be a list of strings")
     metric_ks = sorted(
         {
@@ -256,27 +313,57 @@ def load_suite(path: Path) -> Dict[str, Any]:
     gate = {
         "k": gate_k,
         "max_regressions": int(raw_gate.get("max_regressions", 0)),
-        "pass_drop": float(
-            raw_gate.get(
-                "pass_drop",
-                raw_gate.get("pass_at_%s_drop" % gate_k, 0.0),
-            )
-        ),
+        "pass_at_1_drop": float(raw_gate.get("pass_at_1_drop", 0.0)),
         "cost_increase": float(raw_gate.get("cost_increase", 0.2)),
     }
-    if any(gate[key] < 0 for key in ("max_regressions", "pass_drop", "cost_increase")):
+    if any(
+        gate[key] < 0 for key in ("max_regressions", "pass_at_1_drop", "cost_increase")
+    ):
         raise ValueError("Gate thresholds must be non-negative")
 
     env = data.get("env") or []
     if not isinstance(env, list) or not all(isinstance(item, str) for item in env):
         raise ValueError("env must be a list of variable names")
-    diagnose_mode = str(data.get("diagnose_mode") or "regressions").strip().lower()
-    if diagnose_mode not in {"regressions", "all_failures"}:
-        raise ValueError("diagnose_mode must be regressions or all_failures")
+    raw_diagnosis = data.get("diagnosis") or {}
+    if not isinstance(raw_diagnosis, dict):
+        raise ValueError("diagnosis must be an object")
+    policy = str(raw_diagnosis.get("policy") or "all_final_non_pass")
+    if policy != "all_final_non_pass":
+        raise ValueError("diagnosis.policy must be all_final_non_pass")
+    raw_recovery = data.get("recovery") or {}
+    if not isinstance(raw_recovery, dict):
+        raise ValueError("recovery must be an object")
+    recovery = {
+        "max_infra_retries": int(raw_recovery.get("max_infra_retries", 1)),
+        "max_job_resumes": int(raw_recovery.get("max_job_resumes", 1)),
+    }
+    if any(value < 0 for value in recovery.values()):
+        raise ValueError("Recovery limits must be non-negative")
+    raw_comparison = data.get("comparison")
+    comparison = None
+    if raw_comparison is not None:
+        if not isinstance(raw_comparison, dict):
+            raise ValueError("comparison must be an object")
+        comparison = {
+            "baseline": str(raw_comparison.get("baseline") or "").strip(),
+            "candidates": raw_comparison.get("candidates"),
+        }
+        if not comparison["baseline"] or not isinstance(comparison["candidates"], list):
+            raise ValueError("comparison requires baseline and candidates")
+        if not comparison["candidates"] or not all(
+            isinstance(item, str) and item.strip() for item in comparison["candidates"]
+        ):
+            raise ValueError("comparison.candidates must be a non-empty name list")
+        comparison["candidates"] = [item.strip() for item in comparison["candidates"]]
+        compared = [comparison["baseline"]] + comparison["candidates"]
+        if len(compared) != len(set(compared)) or any(
+            item not in names for item in compared
+        ):
+            raise ValueError("comparison names must be unique configured agents")
     return {
         "suite": name,
-        "baseline": baseline,
-        "candidates": candidates,
+        "agents": agents,
+        "comparison": comparison,
         "benchmarks": benchmarks,
         "trials": trials,
         "concurrency": concurrency,
@@ -285,52 +372,18 @@ def load_suite(path: Path) -> Dict[str, Any]:
         "metric_ks": metric_ks,
         "gate": gate,
         "env": env,
-        "diagnose_mode": diagnose_mode,
-        "diagnose_all_trials": bool(
-            data.get("diagnose_all_trials", diagnose_mode == "all_failures")
-        ),
-        "judge_model": str(
-            data.get("judge_model")
-            or os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
-        ),
-        "max_input_tokens": int(
-            data.get("max_input_tokens", DEFAULT_MAX_INPUT_TOKENS)
-        ),
+        "diagnosis": {
+            "policy": policy,
+            "judge_model": str(
+                raw_diagnosis.get("judge_model")
+                or os.getenv("EVALPLAT_JUDGE_MODEL", "deepseek-v4-pro")
+            ),
+            "max_input_tokens": int(
+                raw_diagnosis.get("max_input_tokens", DEFAULT_MAX_INPUT_TOKENS)
+            ),
+        },
+        "recovery": recovery,
     }
-
-
-def get_baseline(connection: sqlite3.Connection, suite_name: str) -> Optional[Dict[str, Any]]:
-    row = connection.execute(
-        "SELECT * FROM suite_baselines WHERE suite_name=?", (suite_name,)
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def promote_baseline(
-    connection: sqlite3.Connection,
-    suite_name: str,
-    experiment_id: str,
-    version_name: Optional[str] = None,
-) -> Dict[str, Any]:
-    exists = connection.execute(
-        "SELECT 1 FROM outcomes WHERE experiment_id=? LIMIT 1", (experiment_id,)
-    ).fetchone()
-    if not exists:
-        raise ValueError("Unknown or empty experiment: %s" % experiment_id)
-    version = version_name or experiment_id
-    connection.execute(
-        """
-        INSERT INTO suite_baselines (suite_name, experiment_id, version_name, promoted_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(suite_name) DO UPDATE SET
-            experiment_id=excluded.experiment_id,
-            version_name=excluded.version_name,
-            promoted_at=excluded.promoted_at
-        """,
-        (suite_name, experiment_id, version, utcnow()),
-    )
-    connection.commit()
-    return get_baseline(connection, suite_name) or {}
 
 
 class EvalPipeline:
@@ -343,13 +396,11 @@ class EvalPipeline:
         run_id: Optional[str] = None,
         output_dir: Optional[Path] = None,
         harbor_binary: Optional[Path] = None,
-        refresh_baseline: bool = False,
         poll_seconds: float = 2.0,
     ) -> None:
         self.connection = connection
         self.db_path = Path(db_path).expanduser().resolve()
         self.harbor_binary = harbor_binary or find_harbor_binary()
-        self.refresh_baseline = refresh_baseline
         self.poll_seconds = max(0.05, poll_seconds)
         if run_id:
             row = connection.execute(
@@ -360,10 +411,11 @@ class EvalPipeline:
             self.run_id = run_id
             self.config = json.loads(row["config_json"])
             self.progress = json.loads(row["progress_json"])
-            self.refresh_baseline = bool(
-                self.progress.get("refresh_baseline", self.refresh_baseline)
+            self.output_dir = (
+                Path(row["report_path"]).parent
+                if row["report_path"]
+                else self.db_path.parent / "suite-reports"
             )
-            self.output_dir = Path(row["report_path"]).parent if row["report_path"] else self.db_path.parent / "suite-reports"
         else:
             if suite_path is None:
                 raise ValueError("suite_path is required for a new run")
@@ -376,11 +428,7 @@ class EvalPipeline:
                 else self.db_path.parent / "suite-reports"
             )
             report_path = self.output_dir / (self.run_id + ".json")
-            self.progress = {
-                "experiments": {},
-                "completed_variants": [],
-                "refresh_baseline": refresh_baseline,
-            }
+            self.progress = {"experiments": {}, "job_resumes": 0}
             now = utcnow()
             connection.execute(
                 """
@@ -432,6 +480,48 @@ class EvalPipeline:
             datasets.append(dataset)
         return datasets
 
+    def _experiments(self) -> Dict[str, str]:
+        experiments = self.progress.setdefault("experiments", {})
+        for agent in self.config["agents"]:
+            experiments.setdefault(
+                agent["name"], "%s-%s" % (self.run_id, _slug(agent["name"]))
+            )
+        self.progress.setdefault("job_experiment", self.run_id + "-job")
+        self._save()
+        return experiments
+
+    @staticmethod
+    def _resolved_agent(agent: Mapping[str, Any]) -> Dict[str, Any]:
+        return resolve_agent(str(agent["agent"]), agent.get("model"))
+
+    def _agent_lookup(self) -> Dict[tuple, str]:
+        lookup: Dict[tuple, str] = {}
+        for agent in self.config["agents"]:
+            resolved = self._resolved_agent(agent)
+            name = resolved["name"]
+            model = resolved.get("model_name")
+            lookup[(name, model)] = agent["name"]
+            if isinstance(model, str) and "/" in model:
+                lookup[(name, model.rsplit("/", 1)[-1])] = agent["name"]
+            lookup[(name, None)] = agent["name"]
+        return lookup
+
+    def _match_display_agent(self, agent: Mapping[str, Any]) -> Optional[str]:
+        lookup = self._agent_lookup()
+        name = agent.get("name")
+        model = agent.get("model_name")
+        for key in ((name, model), (name, None)):
+            if key in lookup:
+                return lookup[key]
+        if isinstance(model, str) and "/" in model:
+            return lookup.get((name, model.rsplit("/", 1)[-1]))
+        if isinstance(model, str):
+            for (agent_name, agent_model), display in lookup.items():
+                if agent_name == name and isinstance(agent_model, str):
+                    if agent_model.rsplit("/", 1)[-1] == model:
+                        return display
+        return None
+
     def _experiment_has_results(self, experiment: str) -> bool:
         return bool(
             self.connection.execute(
@@ -454,76 +544,188 @@ class EvalPipeline:
             stats.get("n_pending_trials") or 0
         ) == 0
 
-    def _import_available(self, job_dir: Path, experiment: str) -> None:
+    def _import_available(self, job_dir: Path) -> None:
         if not job_dir.exists():
             return
+        experiments = self._experiments()
         try:
-            sync_execution_events(self.connection, job_dir, experiment)
-            import_run(self.connection, job_dir, experiment)
+            sync_execution_events(
+                self.connection, job_dir, self.progress["job_experiment"]
+            )
         except ValueError as error:
-            message = str(error)
-            if "No trajectory JSON files found" in message:
-                return
-            if "ATIF steps, messages, or trajectory" in message:
-                return
-            raise
+            if "execution event" not in str(error).lower():
+                raise
+        for agent in self.config["agents"]:
+            resolved = self._resolved_agent(agent)
+            try:
+                import_run(
+                    self.connection,
+                    job_dir,
+                    experiments[agent["name"]],
+                    agent_model=agent.get("model"),
+                    agent_name=resolved["name"],
+                    model_name=resolved.get("model_name"),
+                )
+            except ValueError as error:
+                message = str(error)
+                if "No trajectory JSON files found" not in message and (
+                    "ATIF steps, messages, or trajectory" not in message
+                ):
+                    raise
 
-    def _wait(self, process: Any, job_dir: Path, experiment: str) -> int:
+    def _wait(self, process: Any, job_dir: Path) -> int:
         while process.poll() is None:
-            self._import_available(job_dir, experiment)
+            self._import_available(job_dir)
             time.sleep(self.poll_seconds)
-        self._import_available(job_dir, experiment)
+        self._import_available(job_dir)
         return process.wait()
 
-    def _run_variant(self, variant: Mapping[str, Any], key: str) -> str:
-        experiment = self.progress["experiments"].get(key)
-        if not experiment:
-            experiment = "%s-%s" % (self.run_id, _slug(str(variant["name"])))
-            self.progress["experiments"][key] = experiment
-            self._save()
-        if key in self.progress["completed_variants"] and self._experiment_has_results(experiment):
-            return experiment
+    def _planned_per_agent(self) -> int:
+        expected = task_count(self.config) * self.config["trials"]
+        return expected
 
+    def _all_results_present(self) -> bool:
+        expected = self._planned_per_agent()
+        if not expected:
+            return False
+        return all(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM outcomes WHERE experiment_id=?", (experiment,)
+            ).fetchone()[0]
+            >= expected
+            for experiment in self._experiments().values()
+        )
+
+    def _planned_trials(self) -> List[Dict[str, Any]]:
+        plans = []
+        for agent in self.config["agents"]:
+            resolved = self._resolved_agent(agent)
+            for benchmark in self.config["benchmarks"]:
+                tasks = benchmark.get("tasks") or []
+                if isinstance(tasks, int):
+                    continue
+                for task in tasks:
+                    for _ in range(self.config["trials"]):
+                        plans.append(
+                            {
+                                "task": {
+                                    "name": task,
+                                    "source": benchmark.get("name")
+                                    or benchmark.get("path"),
+                                },
+                                "agent": resolved,
+                            }
+                        )
+        return plans
+
+    def _record_incomplete_trials(self, job_dir: Path) -> None:
+        lock_path = job_dir / "lock.json"
+        plans = []
+        if lock_path.exists():
+            plans = json.loads(lock_path.read_text(encoding="utf-8")).get("trials") or []
+        if not plans:
+            plans = self._planned_trials()
+        existing = {
+            (name, row["source_instance_id"]): int(row["count"])
+            for name, experiment in self._experiments().items()
+            for row in self.connection.execute(
+                """
+                SELECT source_instance_id, COUNT(*) count FROM trajectories
+                WHERE experiment_id=? GROUP BY source_instance_id
+                """,
+                (experiment,),
+            ).fetchall()
+        }
+        seen: Counter[tuple] = Counter()
+        for plan in plans:
+            task = plan.get("task") or {}
+            agent = plan.get("agent") or {}
+            display_name = self._match_display_agent(agent)
+            if display_name is None:
+                continue
+            key = (display_name, task.get("name"))
+            seen[key] += 1
+            if seen[key] <= existing.get(key, 0):
+                continue
+            token = hashlib.sha256(
+                (self.run_id + repr(key) + str(seen[key])).encode("utf-8")
+            ).hexdigest()[:16]
+            record_dir = job_dir / "evalplat-incomplete" / token
+            record_dir.mkdir(parents=True, exist_ok=True)
+            (record_dir / "result.json").write_text(
+                json.dumps(
+                    {
+                        "id": token,
+                        "trial_name": "%s__incomplete_%s"
+                        % (task.get("name"), seen[key]),
+                        "task_name": task.get("name"),
+                        "source": task.get("source"),
+                        "config": {"agent": agent, "task": task},
+                        "agent_info": {
+                            "name": agent.get("name"),
+                            "model_info": {"name": agent.get("model_name")},
+                        },
+                        "agent_result": None,
+                        "verifier_result": None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        self._import_available(job_dir)
+
+    def _run_job(self) -> Dict[str, str]:
+        experiments = self._experiments()
         jobs_dir = self.db_path.parent / "jobs"
+        benches = [
+            str(item.get("path") or item["name"]) for item in self.config["benchmarks"]
+        ]
         config = build_job_config(
-            agents=[str(variant["agent"])],
-            benches=[str(self.config["benchmarks"][0].get("path") or self.config["benchmarks"][0]["name"])],
+            agents=self.config["agents"],
+            benches=benches,
             sandbox=self.config["sandbox"],
             k=self.config["trials"],
             concurrency=self.config["concurrency"],
-            job_name=experiment,
+            job_name=self.run_id,
             jobs_dir=jobs_dir,
-            model=variant.get("model"),
             env_names=self.config["env"],
-            agent_kwargs=variant.get("agent_kwargs"),
+            max_infra_retries=self.config["recovery"]["max_infra_retries"],
         )
         config["datasets"] = self._datasets()
         job_dir = job_dir_from_config(config)
+        launched = self.progress.setdefault("harbor_launched", False)
         if self._job_finished(job_dir):
-            self._import_available(job_dir, experiment)
-            code = 0
-        elif (job_dir / "config.json").exists():
-            code = self._wait(
-                resume_harbor(job_dir, binary=self.harbor_binary), job_dir, experiment
-            )
+            self._import_available(job_dir)
         else:
-            config_path = write_job_config(
-                config, jobs_dir / (experiment + ".evalplant.json")
-            )
-            code = self._wait(
-                launch_harbor(config_path, binary=self.harbor_binary),
-                job_dir,
-                experiment,
-            )
-        if not self._experiment_has_results(experiment):
-            raise RuntimeError(
-                "Harbor exited with code %s and produced no outcomes for %s"
-                % (code, experiment)
-            )
-        if key not in self.progress["completed_variants"]:
-            self.progress["completed_variants"].append(key)
-            self._save()
-        return experiment
+            if not launched and not (job_dir / "config.json").exists():
+                config_path = write_job_config(
+                    config, jobs_dir / (self.run_id + ".evalplat.json")
+                )
+                self.progress["harbor_launched"] = True
+                self._save()
+                self._wait(
+                    launch_harbor(config_path, binary=self.harbor_binary), job_dir
+                )
+            while not self._job_finished(job_dir) and not self._all_results_present():
+                if self.progress["job_resumes"] >= self.config["recovery"][
+                    "max_job_resumes"
+                ]:
+                    break
+                if not (job_dir / "config.json").exists():
+                    break
+                self.progress["job_resumes"] += 1
+                self._save()
+                self._wait(
+                    resume_harbor(job_dir, binary=self.harbor_binary), job_dir
+                )
+            self._import_available(job_dir)
+        if not self._all_results_present():
+            self._record_incomplete_trials(job_dir)
+        if not all(self._experiment_has_results(item) for item in experiments.values()):
+            raise RuntimeError("Harbor produced no outcomes for one or more agents")
+        return experiments
 
     def _compare(self, baseline: str, candidate: str) -> Dict[str, Any]:
         gate = self.config["gate"]
@@ -534,18 +736,22 @@ class EvalPipeline:
             gate["k"],
             gate["cost_increase"],
             gate["max_regressions"],
-            gate["pass_drop"],
+            gate["pass_at_1_drop"],
         )
         metrics = {}
         for k in self.config["metric_ks"]:
-            current = gate_result if k == gate["k"] else compare_experiments(
-                self.connection,
-                baseline,
-                candidate,
-                k,
-                float("inf"),
-                10**9,
-                1.0,
+            current = (
+                gate_result
+                if k == gate["k"]
+                else compare_experiments(
+                    self.connection,
+                    baseline,
+                    candidate,
+                    k,
+                    float("inf"),
+                    10**9,
+                    1.0,
+                )
             )
             metrics["pass@%s" % k] = {
                 "baseline": current["baseline_metrics"]["pass_at_k"],
@@ -554,19 +760,21 @@ class EvalPipeline:
             }
         triage = []
         for item in gate_result["tasks"]:
-            if "INFRA_ERROR" in item["candidate_statuses"]:
-                kind = "INFRA_ERROR"
-            elif item["change"] == "REGRESSED":
+            baseline_pass = bool(item["baseline_passes"])
+            candidate_pass = bool(item["candidate_passes"])
+            if baseline_pass and not candidate_pass:
                 kind = "NEW_REGRESSION"
-            elif not item["baseline_passes"] and not item["candidate_passes"]:
+            elif not baseline_pass and not candidate_pass:
                 kind = "KNOWN_FAILURE"
-            elif item["change"] == "IMPROVED":
+            elif not baseline_pass and candidate_pass:
                 kind = "IMPROVED"
             else:
-                kind = "UNCHANGED"
+                kind = "BOTH_PASS"
             triage.append({**item, "triage": kind})
         agent_regressions = sum(item["triage"] == "NEW_REGRESSION" for item in triage)
-        infra_errors = sum(item["triage"] == "INFRA_ERROR" for item in triage)
+        infra_errors = sum(
+            "INFRA_ERROR" in item["candidate_statuses"] for item in triage
+        )
         known_failures = sum(item["triage"] == "KNOWN_FAILURE" for item in triage)
         reasons = [
             reason
@@ -599,16 +807,19 @@ class EvalPipeline:
         return {"gate": gate_result, "metrics": metrics, "triage": triage}
 
     def _diagnose_row(self, row: Any) -> Dict[str, Any]:
+        if row["verdict"] == "PASS":
+            return {}
         existing = get_diagnosis(self.connection, row["id"])
         if existing:
             return json.loads(existing["report_json"])
+        diagnosis_config = self.config["diagnosis"]
         if row["source_schema_version"] == "harbor-result-v1":
             diagnosis = diagnose_outcome_only(
                 Path(row["raw_path"]),
                 row["verdict"],
                 row["health_status"],
-                self.config["judge_model"],
-                self.config["max_input_tokens"],
+                diagnosis_config["judge_model"],
+                diagnosis_config["max_input_tokens"],
             )
         else:
             try:
@@ -624,54 +835,42 @@ class EvalPipeline:
                     row["verdict"],
                     row["health_status"],
                     log,
-                    self.config["judge_model"],
-                    self.config["max_input_tokens"],
+                    diagnosis_config["judge_model"],
+                    diagnosis_config["max_input_tokens"],
                 )
             except Exception as error:
                 diagnosis = failed_diagnosis(
                     error,
-                    self.config["judge_model"],
-                    self.config["max_input_tokens"],
+                    diagnosis_config["judge_model"],
+                    diagnosis_config["max_input_tokens"],
                 )
         save_diagnosis(self.connection, row["id"], diagnosis)
         return diagnosis
 
-    def _diagnose_regressions(
-        self, candidate: str, comparison: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+    def _diagnose_all(self, experiment: str) -> List[Dict[str, Any]]:
         results = []
-        kinds = (
-            {"NEW_REGRESSION", "KNOWN_FAILURE", "INFRA_ERROR"}
-            if self.config.get("diagnose_mode") == "all_failures"
-            else {"NEW_REGRESSION"}
-        )
-        limit = "" if self.config.get("diagnose_all_trials") else " LIMIT 1"
-        for item in comparison["triage"]:
-            if item["triage"] not in kinds:
-                continue
-            rows = self.connection.execute(
-                """
-                SELECT t.* FROM trajectories t JOIN outcomes o ON o.trajectory_id=t.id
-                WHERE t.experiment_id=? AND o.task_key=? AND o.status!='PASS'
-                ORDER BY COALESCE(t.finished_at, ''), t.trial_name
-                """
-                + limit,
-                (candidate, item["task_key"]),
-            ).fetchall()
-            for row in rows:
-                results.append(
-                    {
-                        "task_key": item["task_key"],
-                        "trajectory_id": row["id"],
-                        "diagnosis": self._diagnose_row(row),
-                    }
-                )
+        rows = self.connection.execute(
+            """
+            SELECT t.*, o.task_key FROM trajectories t
+            JOIN outcomes o ON o.trajectory_id=t.id
+            WHERE t.experiment_id=? AND o.status!='PASS'
+            ORDER BY o.task_key, COALESCE(t.finished_at, ''), t.trial_name
+            """,
+            (experiment,),
+        ).fetchall()
+        for row in rows:
+            results.append(
+                {
+                    "task_key": row["task_key"],
+                    "trajectory_id": row["id"],
+                    "diagnosis": self._diagnose_row(row),
+                }
+            )
         return results
 
     def _payload(
         self,
-        baseline: str,
-        candidates: Dict[str, str],
+        experiments: Dict[str, str],
         comparisons: Dict[str, Any],
         diagnoses: Dict[str, Any],
     ) -> Dict[str, Any]:
@@ -699,20 +898,22 @@ class EvalPipeline:
                     for reason in comparisons[name]["gate"]["ship_gate"]["reasons"]
                 ],
             },
-            "baseline": {
-                "version": self.config["baseline"]["name"],
-                "experiment": baseline,
-                "statistics": report(self.connection, baseline),
-            },
-            "candidates": {
+            "agents": {
                 name: {
                     "experiment": experiment,
                     "statistics": report(self.connection, experiment),
-                    "comparison": comparisons[name],
                     "diagnoses": diagnoses.get(name, []),
                 }
-                for name, experiment in candidates.items()
+                for name, experiment in experiments.items()
             },
+            "comparison": (
+                {
+                    "baseline": self.config["comparison"]["baseline"],
+                    "candidates": comparisons,
+                }
+                if self.config["comparison"]
+                else None
+            ),
             "failure_clusters": clusters,
             "contract_violations": analysis["contract_violations"],
             "recommendations": analysis["recommendations"],
@@ -730,63 +931,45 @@ class EvalPipeline:
             "",
             "**Ship Gate: %s**" % payload["ship_gate"]["status"],
             "",
-            "| Candidate | Metrics | Improved | Regressed | Unchanged | Cost | Latency | Gate |",
-            "|---|---|---:|---:|---:|---:|---:|---:|",
+            "| Agent | Trials | PASS | Non-PASS |",
+            "|---|---:|---:|---:|",
         ]
-        for name, value in payload["candidates"].items():
-            comparison = value["comparison"]
-            metrics = ", ".join(
-                "%s %s → %s"
-                % (key, self._pct(item["baseline"]), self._pct(item["candidate"]))
-                for key, item in comparison["metrics"].items()
-            )
-            changes = comparison["gate"]["changes"]
-            deltas = comparison["gate"]["deltas"]
+        for name, value in payload["agents"].items():
+            stats = value["statistics"]
             lines.append(
-                "| %s | %s | %s | %s | %s | %s | %s | %s |"
+                "| %s | %s | %s | %s |"
                 % (
                     name,
-                    metrics,
-                    changes["improved"],
-                    changes["regressed"],
-                    changes["unchanged"],
-                    self._pct(deltas["cost_relative"]),
-                    self._pct(deltas["agent_seconds_relative"]),
-                    comparison["gate"]["ship_gate"]["status"],
+                    stats["total_trials"],
+                    stats["successful_trials"],
+                    stats["failed_trials"],
                 )
             )
         reasons = payload["ship_gate"].get("reasons") or []
         if reasons:
             lines += ["", "原因："]
             lines.extend("- %s" % reason for reason in reasons)
-        lines += ["", "## Regression triage", ""]
+        lines += ["", "## Comparison", ""]
         found = False
         index = 0
-        for name, value in payload["candidates"].items():
+        comparison_payload = payload.get("comparison") or {}
+        for name, comparison in comparison_payload.get("candidates", {}).items():
             diagnosis_by_task = {
-                item["task_key"]: item["diagnosis"] for item in value["diagnoses"]
+                item["task_key"]: item["diagnosis"]
+                for item in payload["agents"][name]["diagnoses"]
             }
-            for item in value["comparison"]["triage"]:
-                if item["triage"] not in {"NEW_REGRESSION", "INFRA_ERROR"}:
+            for item in comparison["triage"]:
+                if item["triage"] != "NEW_REGRESSION":
                     continue
                 found = True
                 index += 1
                 diagnosis = diagnosis_by_task.get(item["task_key"], {})
                 category = (
-                    diagnosis.get("category_code")
-                    or diagnosis.get("status")
-                    or "n/a"
+                    diagnosis.get("category_code") or diagnosis.get("status") or "n/a"
                 )
                 label = CATEGORY_LABELS.get(str(category), str(category))
                 step = diagnosis.get("root_cause_step")
-                summary = str(
-                    diagnosis.get("summary")
-                    or (
-                        "Harbor infrastructure error after retries"
-                        if item["triage"] == "INFRA_ERROR"
-                        else "No diagnosis"
-                    )
-                )
+                summary = str(diagnosis.get("summary") or "No diagnosis")
                 lines += [
                     "### Regression #%s" % index,
                     "",
@@ -800,7 +983,11 @@ class EvalPipeline:
                     "",
                 ]
         if not found:
-            lines.append("No new regressions.")
+            lines.append(
+                "No comparison regressions."
+                if payload.get("comparison")
+                else "Comparison disabled."
+            )
             lines.append("")
         if payload.get("failure_clusters"):
             lines += ["## Failure clusters", ""]
@@ -816,12 +1003,11 @@ class EvalPipeline:
         if payload.get("recommendations"):
             lines += ["## Recommended actions", ""]
             primary = payload["recommendations"][0]
-            lines.append("主要回归来自 %s。" % primary["label"])
+            lines.append("主要问题来自 %s。" % primary["label"])
             lines.append("")
             for item in payload["recommendations"]:
                 lines.append(
-                    "- %s (%s): %s"
-                    % (item["label"], item["count"], item["action"])
+                    "- %s (%s): %s" % (item["label"], item["count"], item["action"])
                 )
             lines.append("")
         return "\n".join(lines).rstrip() + "\n"
@@ -839,45 +1025,28 @@ class EvalPipeline:
             return json.loads(Path(row["report_path"]).read_text(encoding="utf-8"))
         try:
             self._save("RUNNING")
-            stored = None if self.refresh_baseline else get_baseline(
-                self.connection, self.config["suite"]
-            )
-            if stored and self._experiment_has_results(stored["experiment_id"]):
-                baseline = stored["experiment_id"]
-            else:
-                baseline = self._run_variant(self.config["baseline"], "baseline")
-                promote_baseline(
-                    self.connection,
-                    self.config["suite"],
-                    baseline,
-                    self.config["baseline"]["name"],
-                )
-            candidates = {
-                variant["name"]: self._run_variant(variant, "candidate:%s" % variant["name"])
-                for variant in self.config["candidates"]
-            }
-            self.progress["baseline_experiment"] = baseline
+            experiments = self._run_job()
             self._save("COLLECTING")
             self.progress["statistics"] = {
-                "baseline": report(self.connection, baseline),
-                **{
-                    name: report(self.connection, experiment)
-                    for name, experiment in candidates.items()
-                },
+                name: report(self.connection, experiment)
+                for name, experiment in experiments.items()
             }
             self._save("EVALUATING")
-            comparisons = {
-                name: self._compare(baseline, experiment)
-                for name, experiment in candidates.items()
-            }
-            self.progress["comparisons"] = comparisons
-            self._save("COMPARING")
             self._save("DIAGNOSING")
             diagnoses = {
-                name: self._diagnose_regressions(candidates[name], comparisons[name])
-                for name in candidates
+                name: self._diagnose_all(experiment)
+                for name, experiment in experiments.items()
             }
-            payload = self._payload(baseline, candidates, comparisons, diagnoses)
+            comparisons = {}
+            if self.config["comparison"]:
+                self._save("COMPARING")
+                baseline = experiments[self.config["comparison"]["baseline"]]
+                comparisons = {
+                    name: self._compare(baseline, experiments[name])
+                    for name in self.config["comparison"]["candidates"]
+                }
+                self.progress["comparisons"] = comparisons
+            payload = self._payload(experiments, comparisons, diagnoses)
             self.output_dir.mkdir(parents=True, exist_ok=True)
             json_path = Path(payload["reports"]["json"])
             md_path = Path(payload["reports"]["markdown"])

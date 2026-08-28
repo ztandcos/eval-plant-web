@@ -672,8 +672,10 @@ class Job:
         exception = event.result.exception_info
         exception_type = exception.exception_type if exception else None
         if event.event == TrialEvent.END:
-            if exception_type in {"AgentTimeoutError", "VerifierTimeoutError"}:
+            if exception_type == "AgentTimeoutError":
                 state = "TIMEOUT"
+            elif exception_type == "VerifierTimeoutError":
+                state = "INFRA_ERROR"
             elif exception_type == CANCELLED_ERROR_TYPE:
                 state = "CANCELLED"
             elif exception_type and self._retryable_exception(exception_type):

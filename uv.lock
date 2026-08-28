@@ -95,7 +95,7 @@ wheels = [
 ]
 
 [[package]]
-name = "evalplant"
+name = "evalplat"
 version = "0.7.0"
 source = { editable = "." }
 dependencies = [

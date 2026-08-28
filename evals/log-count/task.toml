@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/log-count"
+name = "evalplat/log-count"
 version = "1.0.0"
 description = "Count matching ERROR lines with grep-style tools"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "easy"

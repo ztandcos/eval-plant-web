@@ -1,4 +1,4 @@
-"""Drive the Harbor fork bundled inside the EvalPlant repository."""
+"""Drive the Harbor fork bundled inside the EvalPlat repository."""
 
 from __future__ import annotations
 
@@ -67,6 +67,7 @@ SANDBOXES = frozenset(
 
 INFRA_RETRY_EXCEPTIONS = (
     "EnvironmentStartTimeoutError",
+    "VerifierTimeoutError",
     "HealthcheckError",
     "SandboxBuildFailedError",
     "NetworkConnectionError",
@@ -128,7 +129,7 @@ def env_templates(extra: Optional[Iterable[str]] = None) -> Dict[str, str]:
 
 def build_job_config(
     *,
-    agents: Sequence[str],
+    agents: Sequence[Any],
     benches: Sequence[str],
     sandbox: str = "docker",
     k: int = 1,
@@ -140,6 +141,7 @@ def build_job_config(
     env_names: Optional[Sequence[str]] = None,
     agent_kwargs: Optional[Mapping[str, Any]] = None,
     force_build: bool = False,
+    max_infra_retries: int = 2,
 ) -> Dict[str, Any]:
     if not agents:
         raise ValueError("At least one --agent is required")
@@ -149,18 +151,33 @@ def build_job_config(
         raise ValueError("--k must be >= 1")
     if concurrency < 1:
         raise ValueError("--concurrency must be >= 1")
+    if max_infra_retries < 0:
+        raise ValueError("max_infra_retries must be >= 0")
     kind = sandbox.strip().lower()
     if kind not in SANDBOXES:
         raise ValueError(
             "Unknown sandbox %r. Expected one of: %s"
             % (sandbox, ", ".join(sorted(SANDBOXES)))
         )
-    resolved_agents = [resolve_agent(name, model) for name in agents]
-    if agent_kwargs:
-        for agent in resolved_agents:
+    resolved_agents = []
+    for item in agents:
+        n_concurrent = concurrency
+        if isinstance(item, str):
+            agent = resolve_agent(item, model)
+            kwargs = agent_kwargs
+        elif isinstance(item, Mapping):
+            agent = resolve_agent(str(item["agent"]), item.get("model"))
+            kwargs = item.get("agent_kwargs")
+            if item.get("n_concurrent") is not None:
+                n_concurrent = int(item["n_concurrent"])
+        else:
+            raise ValueError("agents entries must be strings or objects")
+        if kwargs:
             merged = dict(agent.get("kwargs") or {})
-            merged.update(agent_kwargs)
+            merged.update(kwargs)
             agent["kwargs"] = merged
+        agent["n_concurrent"] = n_concurrent
+        resolved_agents.append(agent)
     jobs_dir = Path(jobs_dir).expanduser().resolve()
     return {
         "job_name": job_name,
@@ -169,8 +186,9 @@ def build_job_config(
         "n_concurrent_trials": concurrency,
         "quiet": False,
         "retry": {
-            "max_retries": 2,
+            "max_retries": max_infra_retries,
             "include_exceptions": list(INFRA_RETRY_EXCEPTIONS),
+            "exclude_exceptions": ["AgentTimeoutError"],
         },
         "environment": {
             "type": kind,
@@ -187,7 +205,7 @@ def default_job_name(experiment: Optional[str] = None) -> str:
     if experiment:
         return experiment
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    return "evalplant-%s" % stamp
+    return "evalplat-%s" % stamp
 
 
 def write_job_config(config: Mapping[str, Any], path: Path) -> Path:
@@ -200,20 +218,20 @@ def write_job_config(config: Mapping[str, Any], path: Path) -> Path:
 
 
 def find_harbor_binary() -> Path:
-    explicit = os.getenv("EVALPLANT_HARBOR")
+    explicit = os.getenv("EVALPLAT_HARBOR")
     if explicit:
         binary = Path(explicit).expanduser()
         if binary.is_file():
             return binary
         raise FileNotFoundError(
-            "EVALPLANT_HARBOR does not point to a file: %s" % binary
+            "EVALPLAT_HARBOR does not point to a file: %s" % binary
         )
     if LOCAL_HARBOR_BINARY.is_file():
         return LOCAL_HARBOR_BINARY
     found = shutil.which("harbor")
     if found:
         return Path(found)
-    root = os.getenv("EVALPLANT_HARBOR_ROOT")
+    root = os.getenv("EVALPLAT_HARBOR_ROOT")
     if root:
         candidate = Path(root).expanduser() / ".venv" / "bin" / "harbor"
         if candidate.is_file():
@@ -221,7 +239,7 @@ def find_harbor_binary() -> Path:
     raise FileNotFoundError(
         "The bundled Harbor environment is not installed. Run `uv sync --project "
         "harbor`, put another compatible `harbor` on PATH, or set "
-        "EVALPLANT_HARBOR to its binary."
+        "EVALPLAT_HARBOR to its binary."
     )
 
 
@@ -235,7 +253,7 @@ def launch_harbor(
     command = [str(harbor), "run", "-c", str(config_path), "-y"]
     workdir = cwd
     if workdir is None:
-        root = os.getenv("EVALPLANT_HARBOR_ROOT")
+        root = os.getenv("EVALPLAT_HARBOR_ROOT")
         workdir = Path(root).expanduser() if root else None
     return subprocess.Popen(command, cwd=str(workdir) if workdir else None)
 

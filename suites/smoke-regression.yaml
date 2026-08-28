@@ -1,10 +1,8 @@
-suite: evalplant-smoke-regression
+suite: evalplat-smoke-regression
 
-baseline:
-  name: oracle
-  agent: oracle
-
-candidates:
+agents:
+  - name: oracle
+    agent: oracle
   - name: nop
     agent: nop
 
@@ -16,9 +14,21 @@ trials: 1
 concurrency: 1
 sandbox: docker
 metrics: [pass@1, cost, latency]
-judge_model: not-called
+
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: not-called
+
+recovery:
+  max_infra_retries: 1
+  max_job_resumes: 1
+
+comparison:
+  baseline: oracle
+  candidates: [nop]
 
 gate:
+  k: 1
   pass_at_1_drop: 0.0
   max_regressions: 0
   cost_increase: 0.20

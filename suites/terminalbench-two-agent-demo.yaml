@@ -1,0 +1,47 @@
+suite: terminalbench-two-agent-demo
+
+agents:
+  - name: dsh-flash
+    agent: dsh
+    model: deepseek/deepseek-v4-flash
+    n_concurrent: 2
+
+  - name: codex-mini
+    agent: codex
+    model: gpt-5-mini
+    n_concurrent: 2
+
+benchmarks:
+  - name: terminal-bench@2.0
+    tasks:
+      - kv-store-grpc
+      - fix-git
+
+trials: 3
+concurrency: 4
+sandbox: docker
+
+env:
+  - DEEPSEEK_API_KEY
+  - OPENAI_API_KEY
+
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: deepseek-v4-pro
+  max_input_tokens: 100000
+
+recovery:
+  max_infra_retries: 1
+  max_job_resumes: 1
+
+comparison:
+  baseline: dsh-flash
+  candidates: [codex-mini]
+
+metrics: [pass@1, pass@3, cost, latency]
+
+gate:
+  k: 1
+  max_regressions: 0
+  pass_at_1_drop: 0.02
+  cost_increase: 0.20

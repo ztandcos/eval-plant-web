@@ -1,11 +1,11 @@
 schema_version = "1.4"
 
 [task]
-name = "evalplant/heartbeat-worker"
+name = "evalplat/heartbeat-worker"
 version = "1.0.0"
 description = "Keep a background worker updating a heartbeat file"
 authors = []
-keywords = ["evalplant"]
+keywords = ["evalplat"]
 
 [metadata]
 difficulty = "medium"

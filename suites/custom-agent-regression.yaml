@@ -1,14 +1,15 @@
 suite: custom-agent-regression
 
-baseline:
-  name: dsh-flash
-  agent: dsh
-  model: deepseek/deepseek-v4-flash
+agents:
+  - name: dsh-flash
+    agent: dsh
+    model: deepseek/deepseek-v4-flash
+    n_concurrent: 2
 
-candidates:
   - name: dsh-pro
     agent: dsh
     model: deepseek/deepseek-v4-pro
+    n_concurrent: 2
 
 benchmarks:
   - path: ../evals
@@ -29,9 +30,18 @@ concurrency: 3
 sandbox: docker
 env: [DEEPSEEK_API_KEY]
 metrics: [pass@1, pass@3, cost, latency]
-judge_model: deepseek-v4-pro
-diagnose_mode: all_failures
-diagnose_all_trials: true
+
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: deepseek-v4-pro
+
+recovery:
+  max_infra_retries: 1
+  max_job_resumes: 1
+
+comparison:
+  baseline: dsh-flash
+  candidates: [dsh-pro]
 
 gate:
   k: 1

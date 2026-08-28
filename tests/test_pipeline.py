@@ -9,19 +9,20 @@ from unittest.mock import Mock, patch
 
 from rich.console import Console
 
-from evalplant import cli
-from evalplant.cli import command_inspect, command_report, main, parser, run_pipeline
-from evalplant.core import build_segment_index, build_structured_index, estimate_tokens
-from evalplant.db import (
+from evalplat import cli
+from evalplat.cli import command_inspect, command_report, main, parser, run_pipeline
+from evalplat.core import build_segment_index, build_structured_index, estimate_tokens
+from evalplat.db import (
     connect,
     execution_status,
     import_run,
+    map_trial_outcome,
     save_diagnosis,
     sync_execution_events,
 )
-from evalplant.evaluation import evaluate, stability
-from evalplant.judge import analyze_trajectory
-from evalplant.metrics import compare_experiments, report
+from evalplat.evaluation import evaluate, stability
+from evalplat.judge import analyze_trajectory
+from evalplat.metrics import compare_experiments, report
 
 
 def harbor_trial(
@@ -33,7 +34,11 @@ def harbor_trial(
     reward=0.0,
     trajectory_id=None,
     agent_name="dsh",
+    agent_model="deepseek",
     exception_info=None,
+    include_verifier=True,
+    include_agent_result=True,
+    write_trajectory=True,
 ) -> Path:
     trial = job / trial_name
     agent = trial / "agent"
@@ -68,49 +73,50 @@ def harbor_trial(
             }
         )
     raw_path = agent / "trajectory.json"
-    raw_path.write_text(
-        json.dumps(
+    if write_trajectory:
+        raw_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "ATIF-v1.7",
+                    "session_id": "session-1",
+                    "agent": {
+                        "name": agent_name,
+                        "version": "0.1",
+                        "model_name": agent_model,
+                    },
+                    "steps": steps,
+                }
+            ),
+            encoding="utf-8",
+        )
+    payload = {
+        "id": trajectory_id or trial_name,
+        "task_name": task_name,
+        "trial_name": trial_name,
+        "config": {"agent": {"name": agent_name, "model_name": agent_model}},
+        "agent_info": {
+            "name": agent_name,
+            "version": "0.1",
+            "model_info": {"name": agent_model},
+        },
+        "agent_result": (
             {
-                "schema_version": "ATIF-v1.7",
-                "session_id": "session-1",
-                "agent": {
-                    "name": agent_name,
-                    "version": "0.1",
-                    "model_name": "deepseek",
-                },
-                "steps": steps,
+                "cost_usd": 0.2,
+                "api_calls": 2,
+                "n_input_tokens": 100,
+                "n_cache_tokens": 10,
+                "n_output_tokens": 20,
             }
+            if include_agent_result
+            else None
         ),
-        encoding="utf-8",
-    )
-    (trial / "result.json").write_text(
-        json.dumps(
-            {
-                "id": trajectory_id or trial_name,
-                "task_name": task_name,
-                "trial_name": trial_name,
-                "agent_info": {
-                    "name": agent_name,
-                    "version": "0.1",
-                    "model_info": {"name": "deepseek"},
-                },
-                "agent_result": {
-                    "cost_usd": 0.2,
-                    "api_calls": 2,
-                    "n_input_tokens": 100,
-                    "n_cache_tokens": 10,
-                    "n_output_tokens": 20,
-                },
-                "verifier_result": {"rewards": {"task": reward}},
-                **(
-                    {"exception_info": exception_info}
-                    if exception_info
-                    else {}
-                ),
-            }
+        "verifier_result": (
+            {"rewards": {"task": reward}} if include_verifier else None
         ),
-        encoding="utf-8",
-    )
+    }
+    if exception_info:
+        payload["exception_info"] = exception_info
+    (trial / "result.json").write_text(json.dumps(payload), encoding="utf-8")
     (verifier / "test-stdout.txt").write_text("1 test failed", encoding="utf-8")
     return raw_path
 
@@ -187,7 +193,7 @@ def attributed_payload(quote="printf bad > config.ini"):
 class PipelineTest(unittest.TestCase):
     def test_shipped_demo_runs_without_api_key(self):
         with tempfile.TemporaryDirectory() as temp:
-            connection = connect(Path(temp) / "evalplant.db")
+            connection = connect(Path(temp) / "evalplat.db")
             demo = Path(__file__).resolve().parent.parent / "examples" / "demo-job"
             trajectory_id = import_run(connection, demo, "demo")[0]
             row = connection.execute(
@@ -217,7 +223,7 @@ class PipelineTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "outcome-only")[0]
             row = connection.execute(
                 "SELECT verdict, source_schema_version FROM trajectories WHERE id=?",
@@ -270,7 +276,7 @@ class PipelineTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            from evalplant.judge import diagnose_outcome_only
+            from evalplat.judge import diagnose_outcome_only
 
             result = diagnose_outcome_only(
                 path, "INFRA_ERROR", "INFRA_ERROR", "not-called"
@@ -303,7 +309,7 @@ class PipelineTest(unittest.TestCase):
 
     def test_database_has_evaluation_tables(self):
         with tempfile.TemporaryDirectory() as temp:
-            connection = connect(Path(temp) / "evalplant.db")
+            connection = connect(Path(temp) / "evalplat.db")
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -331,7 +337,7 @@ class PipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             raw_path = harbor_run(root)
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "smoke")[0]
             row = connection.execute(
                 "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
@@ -340,7 +346,7 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(row["health_status"], "VALID")
             self.assertEqual(row["raw_path"], str(raw_path.resolve()))
             self.assertEqual(row["source_schema_version"], "ATIF-v1.7")
-            self.assertEqual(row["canonical_schema_version"], "evalplant-canonical-v1")
+            self.assertEqual(row["canonical_schema_version"], "evalplat-canonical-v1")
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0], 3
             )
@@ -358,7 +364,7 @@ class PipelineTest(unittest.TestCase):
                 2,
             )
             connection.close()
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             self.assertEqual(
                 connection.execute(
                     "SELECT COUNT(*) FROM checks WHERE trajectory_id=?",
@@ -394,7 +400,7 @@ class PipelineTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "exc")[0]
             row = connection.execute(
                 "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
@@ -412,7 +418,7 @@ class PipelineTest(unittest.TestCase):
             result_path = raw_path.parent.parent / "result.json"
             result = result_path.read_text(encoding="utf-8")
             result_path.unlink()
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
 
             trajectory_id = import_run(connection, root / "job", "live")[0]
             save_diagnosis(connection, trajectory_id, attributed_payload())
@@ -449,7 +455,7 @@ class PipelineTest(unittest.TestCase):
                 ]
             }
             result_path.write_text(json.dumps(payload), encoding="utf-8")
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "checks")[0]
             outcome = connection.execute(
                 "SELECT status FROM outcomes WHERE trajectory_id=?", (trajectory_id,)
@@ -484,7 +490,7 @@ class PipelineTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "ctrf")[0]
             checks = connection.execute(
                 "SELECT name, status FROM checks WHERE trajectory_id=? ORDER BY name",
@@ -652,7 +658,7 @@ class PipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             raw_path = harbor_run(root)
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "smoke")[0]
             diagnosis = analyze_trajectory(
                 raw_path, "FAIL", "VALID", max_input_tokens=1
@@ -741,7 +747,7 @@ class PipelineTest(unittest.TestCase):
             (root / "execution-events.jsonl").write_text(
                 "\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8"
             )
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             self.assertEqual(sync_execution_events(connection, root, "run"), 2)
             result = execution_status(connection, "run", lost_after_seconds=1)
             self.assertEqual(result["retries"], 1)
@@ -773,7 +779,6 @@ class PipelineTest(unittest.TestCase):
                 "compare",
                 "eval",
                 "resume",
-                "baseline",
             },
         )
 
@@ -794,10 +799,10 @@ class PipelineTest(unittest.TestCase):
                             reward=reward,
                             trajectory_id="%s-%s-%s" % (experiment, task, trial),
                         )
-                connection = connect(root / "evalplant.db")
+                connection = connect(root / "evalplat.db")
                 import_run(connection, job, experiment)
                 connection.close()
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             result = compare_experiments(connection, "baseline", "candidate", k=2)
             self.assertEqual(result["eligible_tasks"], 2)
             self.assertEqual(result["baseline_metrics"]["pass_at_k"], 0.5)
@@ -819,7 +824,7 @@ class PipelineTest(unittest.TestCase):
                 main(
                     [
                         "--db",
-                        str(root / "evalplant.db"),
+                        str(root / "evalplat.db"),
                         "compare",
                         "--baseline",
                         "baseline",
@@ -841,7 +846,7 @@ class PipelineTest(unittest.TestCase):
     def test_run_demo_oneshots_without_api_key(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            db = root / "evalplant.db"
+            db = root / "evalplat.db"
             report_path = root / "demo-report.json"
             demo = Path(__file__).resolve().parent.parent / "examples" / "demo-job"
             code = main(
@@ -892,7 +897,7 @@ class PipelineTest(unittest.TestCase):
                 agent_name="OpenHands",
                 trajectory_id="openhands-1",
             )
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "decouple")[0]
             row = connection.execute(
                 "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
@@ -921,7 +926,7 @@ class PipelineTest(unittest.TestCase):
             result = json.loads(result_path.read_text(encoding="utf-8"))
             result["config"] = {"task": {"source": "terminal-bench@2.0"}}
             result_path.write_text(json.dumps(result), encoding="utf-8")
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             trajectory_id = import_run(connection, root / "job", "registry-source")[0]
             row = connection.execute(
                 "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
@@ -1021,7 +1026,7 @@ class PipelineTest(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-            connection = connect(root / "evalplant.db")
+            connection = connect(root / "evalplat.db")
             output = root / "live-report.json"
             buffer = StringIO()
             with patch.object(
@@ -1055,6 +1060,70 @@ class PipelineTest(unittest.TestCase):
             ]
             self.assertEqual(diagnoses, 1)
             connection.close()
+
+    def test_maps_outcomes_by_execution_stage(self):
+        self.assertEqual(
+            map_trial_outcome(
+                {"verifier_result": {"rewards": {"task": 1.0}}},
+                [{"status": "PASS"}],
+                1.0,
+            ),
+            "PASS",
+        )
+        self.assertEqual(
+            map_trial_outcome(
+                {"verifier_result": {"rewards": {"task": 0.0}}},
+                [{"status": "FAIL"}],
+                0.0,
+            ),
+            "FAIL",
+        )
+        self.assertEqual(
+            map_trial_outcome(
+                {
+                    "exception_info": {"exception_type": "AgentTimeoutError"},
+                    "verifier_result": {"rewards": {"task": 0.0}},
+                },
+                [{"status": "FAIL"}],
+            ),
+            "TIMEOUT",
+        )
+        self.assertEqual(
+            map_trial_outcome(
+                {"exception_info": {"exception_type": "EnvironmentStartTimeoutError"}}
+            ),
+            "INFRA_ERROR",
+        )
+        self.assertEqual(
+            map_trial_outcome(
+                {"exception_info": {"exception_type": "VerifierTimeoutError"}}
+            ),
+            "INFRA_ERROR",
+        )
+        self.assertEqual(
+            map_trial_outcome({"agent_result": {"cost_usd": 0.1}}),
+            "UNKNOWN",
+        )
+        self.assertEqual(map_trial_outcome({}), "INCOMPLETE")
+        self.assertEqual(
+            map_trial_outcome(
+                {
+                    "exception_info": {"exception_type": "NonZeroAgentExitCodeError"},
+                    "verifier_result": {"rewards": {"task": 1.0}},
+                },
+                [{"status": "PASS"}],
+                1.0,
+            ),
+            "PASS",
+        )
+
+    def test_agent_timeout_exception_name_substring_is_not_enough(self):
+        self.assertEqual(
+            map_trial_outcome(
+                {"exception_info": {"exception_type": "CustomTimeoutWrapper"}}
+            ),
+            "INFRA_ERROR",
+        )
 
 
 if __name__ == "__main__":

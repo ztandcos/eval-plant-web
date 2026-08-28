@@ -6,10 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from evalplant import cli
-from evalplant.cli import command_bench, main
-from evalplant.db import connect
-from evalplant.harbor_adapter import (
+from evalplat import cli
+from evalplat.cli import command_bench, main
+from evalplat.db import connect
+from evalplat.harbor_adapter import (
     build_job_config,
     find_harbor_binary,
     job_dir_from_config,
@@ -89,7 +89,11 @@ class HarborAdapterTest(unittest.TestCase):
             self.assertEqual(config["agents"][1]["name"], "codex")
             self.assertEqual(config["datasets"][0]["path"], str(tasks.resolve()))
             self.assertEqual(config["datasets"][1]["name"], "swe-bench")
-            self.assertEqual(job_dir_from_config(config), jobs.resolve() / "matrix")
+            self.assertEqual(config["retry"]["exclude_exceptions"], ["AgentTimeoutError"])
+            self.assertIn("VerifierTimeoutError", config["retry"]["include_exceptions"])
+            self.assertEqual(
+                [item["n_concurrent"] for item in config["agents"]], [2, 2]
+            )
 
     def test_unknown_sandbox_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -107,7 +111,7 @@ class HarborAdapterTest(unittest.TestCase):
             binary = Path(temp) / "harbor"
             binary.write_text("", encoding="utf-8")
             binary.chmod(0o755)
-            with patch.dict(os.environ, {"EVALPLANT_HARBOR": str(binary)}):
+            with patch.dict(os.environ, {"EVALPLAT_HARBOR": str(binary)}):
                 self.assertEqual(find_harbor_binary(), binary)
 
     def test_find_harbor_prefers_bundled_fork(self):
@@ -117,9 +121,9 @@ class HarborAdapterTest(unittest.TestCase):
             upstream = Path(temp) / "upstream-harbor"
             upstream.write_text("", encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
-                with patch("evalplant.harbor_adapter.LOCAL_HARBOR_BINARY", local):
+                with patch("evalplat.harbor_adapter.LOCAL_HARBOR_BINARY", local):
                     with patch(
-                        "evalplant.harbor_adapter.shutil.which",
+                        "evalplat.harbor_adapter.shutil.which",
                         return_value=str(upstream),
                     ):
                         self.assertEqual(find_harbor_binary(), local)
@@ -129,7 +133,7 @@ class HarborAdapterTest(unittest.TestCase):
             root = Path(temp)
             tasks = root / "tasks"
             tasks.mkdir()
-            db = root / "evalplant.db"
+            db = root / "evalplat.db"
             launched = []
 
             def fake_launch(config_path, binary=None, cwd=None):
@@ -151,7 +155,7 @@ class HarborAdapterTest(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             self.assertEqual(launched, [])
-            written = list((root / "jobs").glob("*.evalplant.json"))
+            written = list((root / "jobs").glob("*.evalplat.json"))
             self.assertEqual(len(written), 1)
             payload = json.loads(written[0].read_text(encoding="utf-8"))
             self.assertEqual(payload["agents"][0]["name"], "dsh-minimal")
@@ -161,7 +165,7 @@ class HarborAdapterTest(unittest.TestCase):
             root = Path(temp)
             tasks = root / "tasks"
             tasks.mkdir()
-            db = root / "evalplant.db"
+            db = root / "evalplat.db"
 
             def fake_launch(config_path, binary=None, cwd=None):
                 config = json.loads(Path(config_path).read_text(encoding="utf-8"))
@@ -221,7 +225,7 @@ class HarborAdapterTest(unittest.TestCase):
             root = Path(temp)
             tasks = root / "tasks"
             tasks.mkdir()
-            db = root / "evalplant.db"
+            db = root / "evalplat.db"
             connection = connect(db)
             connection.execute(
                 "INSERT INTO experiments VALUES (?, ?, ?, ?)",
@@ -249,9 +253,9 @@ class HarborAdapterTest(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(launched, [])
 
-    def test_list_and_missing_agent_are_evalplant_errors(self):
+    def test_list_and_missing_agent_are_evalplat_errors(self):
         with tempfile.TemporaryDirectory() as temp:
-            db = str(Path(temp) / "evalplant.db")
+            db = str(Path(temp) / "evalplat.db")
             self.assertEqual(main(["--db", db, "bench", "--list"]), 0)
             self.assertEqual(
                 main(["--db", db, "bench", "--bench", "terminal-bench"]),

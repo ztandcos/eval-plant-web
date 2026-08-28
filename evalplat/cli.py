@@ -582,15 +582,18 @@ def _suite_exit_code(payload: Dict[str, Any]) -> int:
 
 
 def command_eval(args: argparse.Namespace, connection: sqlite3.Connection) -> int:
-    from .pipeline import EvalPipeline, resolve_suite_path
+    from .pipeline import EvalPipeline, format_suite_config, load_suite, resolve_suite_path
 
+    if args.print_config:
+        config = load_suite(resolve_suite_path(args.suite))
+        console.print(format_suite_config(config).rstrip())
+        return 0
     pipeline = EvalPipeline(
         connection,
         _path(args.db),
         suite_path=resolve_suite_path(args.suite),
         output_dir=_path(args.output_dir) if args.output_dir else None,
         harbor_binary=_path(args.harbor) if args.harbor else None,
-        refresh_baseline=args.refresh_baseline,
         poll_seconds=args.poll_seconds,
     )
     payload = pipeline.run()
@@ -611,20 +614,6 @@ def command_resume(args: argparse.Namespace, connection: sqlite3.Connection) -> 
     payload = pipeline.run()
     _print_suite_result(payload)
     return _suite_exit_code(payload)
-
-
-def command_baseline(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
-    from .pipeline import get_baseline, promote_baseline
-
-    if args.set_experiment:
-        result = promote_baseline(
-            connection, args.suite, args.set_experiment, args.version_name
-        )
-    else:
-        result = get_baseline(connection, args.suite)
-        if result is None:
-            raise ValueError("No production baseline recorded for %s" % args.suite)
-    console.print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def _print_ok(row: sqlite3.Row) -> None:
@@ -652,7 +641,7 @@ def _ready_to_diagnose(
 ) -> bool:
     if row["verdict"] == "PASS":
         return False
-    if row["verdict"] in {"FAIL", "TIMEOUT", "INFRA_ERROR"}:
+    if row["verdict"] in {"FAIL", "TIMEOUT", "INFRA_ERROR", "UNKNOWN", "INCOMPLETE"}:
         return True
     if not live:
         return True
@@ -884,7 +873,7 @@ def command_bench(args: argparse.Namespace, connection: sqlite3.Connection) -> N
             % experiment
         )
     config_path = write_job_config(
-        config, jobs_dir / ("%s.evalplant.json" % experiment)
+        config, jobs_dir / ("%s.evalplat.json" % experiment)
     )
     console.print("Job config: [bold]%s[/bold]" % config_path)
     if args.print_config:
@@ -1005,7 +994,7 @@ def _add_run_flags(sub: argparse.ArgumentParser, include_once: bool) -> None:
     )
     sub.add_argument("--experiment")
     sub.add_argument(
-        "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
+        "--model", default=os.getenv("EVALPLAT_JUDGE_MODEL", "deepseek-v4-pro")
     )
     sub.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
     sub.add_argument("--force", action="store_true")
@@ -1024,14 +1013,14 @@ def _add_run_flags(sub: argparse.ArgumentParser, include_once: bool) -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        prog="evalplant",
+        prog="evalplat",
         description=(
             "Outcome-first evaluation: bench launches Harbor internally; "
             "run / diagnose / report stay available for traces you already have"
         ),
     )
     root.add_argument("--version", action="version", version=__version__)
-    root.add_argument("--db", default=os.getenv("EVALPLANT_DB", "data/evalplant.db"))
+    root.add_argument("--db", default=os.getenv("EVALPLAT_DB", "data/evalplat.db"))
     commands = root.add_subparsers(dest="command", required=True)
 
     sub = commands.add_parser(
@@ -1091,7 +1080,7 @@ def parser() -> argparse.ArgumentParser:
     )
     sub.add_argument(
         "--model",
-        default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro"),
+        default=os.getenv("EVALPLAT_JUDGE_MODEL", "deepseek-v4-pro"),
         help="Judge model used as each failed trial finishes",
     )
     sub.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
@@ -1112,7 +1101,11 @@ def parser() -> argparse.ArgumentParser:
     )
     sub.add_argument("--output-dir", help="Directory for JSON and Markdown reports")
     sub.add_argument("--harbor", help="Path to the harbor binary")
-    sub.add_argument("--refresh-baseline", action="store_true")
+    sub.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Parse and validate the suite, print the planned matrix, then exit",
+    )
     sub.add_argument("--poll-seconds", type=float, default=2.0)
     sub.set_defaults(handler=command_eval)
 
@@ -1121,14 +1114,6 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--harbor", help="Path to the harbor binary")
     sub.add_argument("--poll-seconds", type=float, default=2.0)
     sub.set_defaults(handler=command_resume)
-
-    sub = commands.add_parser(
-        "baseline", help="Show or promote a suite production baseline"
-    )
-    sub.add_argument("--suite", required=True)
-    sub.add_argument("--set", dest="set_experiment")
-    sub.add_argument("--version", dest="version_name")
-    sub.set_defaults(handler=command_baseline)
 
     sub = commands.add_parser(
         "run",
@@ -1167,7 +1152,7 @@ def parser() -> argparse.ArgumentParser:
     sub = commands.add_parser("analyze", help="Diagnose failed trajectories")
     sub.add_argument("--experiment", required=True)
     sub.add_argument(
-        "--model", default=os.getenv("EVALPLANT_JUDGE_MODEL", "deepseek-v4-pro")
+        "--model", default=os.getenv("EVALPLAT_JUDGE_MODEL", "deepseek-v4-pro")
     )
     sub.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
     sub.add_argument("--trajectory", help="Diagnose only this trajectory ID")
