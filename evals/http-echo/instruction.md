@@ -1,0 +1,1 @@
+Start an HTTP server listening on `127.0.0.1:8080`. A GET request to `/health` must return HTTP 200 with body exactly `ok` (optional trailing newline). The server must still be running when the verifier starts. Do not shut it down.

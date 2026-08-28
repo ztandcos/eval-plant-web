@@ -31,6 +31,7 @@ AGENT_ALIASES: Dict[str, Dict[str, Any]] = {
     "mini-swe-agent": {"name": "mini-swe-agent"},
     "terminus": {"name": "terminus"},
     "oracle": {"name": "oracle"},
+    "nop": {"name": "nop"},
 }
 
 SANDBOXES = frozenset(
@@ -73,6 +74,9 @@ INFRA_RETRY_EXCEPTIONS = (
     "ApiOverloadedError",
     "ApiConnectionClosedError",
     "ApiResponseStalledError",
+    # Harbor raises RuntimeError when `docker compose build/start` fails,
+    # including flaky apt-get during image builds.
+    "RuntimeError",
 )
 
 KNOWN_SECRET_ENV = (
@@ -234,6 +238,17 @@ def launch_harbor(
         root = os.getenv("EVALPLANT_HARBOR_ROOT")
         workdir = Path(root).expanduser() if root else None
     return subprocess.Popen(command, cwd=str(workdir) if workdir else None)
+
+
+def resume_harbor(
+    job_dir: Path,
+    *,
+    binary: Optional[Path] = None,
+    cwd: Optional[Path] = None,
+) -> subprocess.Popen:
+    harbor = Path(binary) if binary is not None else find_harbor_binary()
+    command = [str(harbor), "jobs", "resume", "-p", str(job_dir)]
+    return subprocess.Popen(command, cwd=str(cwd) if cwd else None)
 
 
 def job_dir_from_config(config: Mapping[str, Any]) -> Path:

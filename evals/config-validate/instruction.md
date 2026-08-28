@@ -1,0 +1,1 @@
+Create `/app/service.conf` as KEY=VALUE lines. Required keys: `NAME` (any non-empty string), `PORT` (integer), and `MODE` which must equal `prod`. A checker is already at `/app/validate.py`. You should run `python3 /app/validate.py` yourself and only finish after it prints `ok`.

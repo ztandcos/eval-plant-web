@@ -91,12 +91,22 @@ class DshMinimal(BaseInstalledAgent):
     async def install(self, environment: BaseEnvironment) -> None:
         installed = await self._sdk_available(environment)
         await self._configure_apt(environment)
-        await self.ensure_system_dependencies(
-            environment,
-            ("bash", "coreutils")
-            if installed
-            else ("curl", "bash", "ca_certificates", "coreutils"),
+        # ca_certificates is always_install=True in BaseInstalledAgent, which
+        # forces apt-get update on every trial. Skip it when the bundle exists
+        # so flaky Ubuntu mirrors cannot fail otherwise-ready images.
+        certs = await environment.exec(
+            command=(
+                "test -f /etc/ssl/certs/ca-certificates.crt "
+                "|| test -f /etc/ssl/cert.pem"
+            ),
+            user="root",
         )
+        wanted = ("bash", "coreutils") if installed else ("curl", "bash", "coreutils")
+        if certs.return_code != 0:
+            wanted = wanted + ("ca_certificates",)
+        dependencies = await self._missing_system_dependencies(environment, wanted)
+        if dependencies:
+            await self.ensure_system_dependencies(environment, dependencies)
 
         if not installed:
             agent_user = shlex.quote(str(environment.default_user or "root"))
@@ -132,6 +142,24 @@ class DshMinimal(BaseInstalledAgent):
         )
 
     @override
+    async def _missing_system_dependencies(
+        self, environment: BaseEnvironment, dependencies: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        missing: list[str] = []
+        for name in dependencies:
+            spec = self.SYSTEM_PACKAGES[name]
+            if spec.always_install or not spec.commands:
+                missing.append(name)
+                continue
+            check = " && ".join(
+                f"command -v {shlex.quote(command)} >/dev/null 2>&1"
+                for command in spec.commands
+            )
+            result = await environment.exec(command=check, user="root")
+            if result.return_code != 0:
+                missing.append(name)
+        return tuple(missing)
+
     async def ensure_system_dependencies(
         self, environment: BaseEnvironment, dependencies: tuple[str, ...]
     ) -> None:
@@ -140,8 +168,12 @@ class DshMinimal(BaseInstalledAgent):
                 await super().ensure_system_dependencies(environment, dependencies)
                 return
             except NonZeroAgentExitCodeError as exc:
-                transient = "Mirror sync in progress" in str(exc) or (
-                    "File has unexpected size" in str(exc)
+                text = str(exc)
+                transient = (
+                    "Mirror sync in progress" in text
+                    or "File has unexpected size" in text
+                    or "apt-get update" in text
+                    or " 500 " in text
                 )
                 if not transient or attempt == self._APT_INSTALL_ATTEMPTS - 1:
                     raise

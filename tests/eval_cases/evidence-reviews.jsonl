@@ -1,0 +1,32 @@
+{"case_id": "fc8d32d6f6c1b131", "evidence_supported": false, "annotator": "drbz", "notes": "Judge FAILED before emitting evidence (quote not in step 4)."}
+{"case_id": "c0ac15900f69fc62", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted final summary is real, but it does not support 'missing completion signal'. The task has no such contract; the agent already verified the heartbeat."}
+{"case_id": "e5b286b607254ce4", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted summary is real, but it does not support 'no verification'. In-session ps/timestamp checks exist. Failure is daemonization."}
+{"case_id": "2006ab0e752a0b82", "evidence_supported": true, "annotator": "drbz", "notes": "xxd not found is in the trace. It supports a recovered tool error, not the verifier failure; marked supported only as a quote of a real event."}
+{"case_id": "bda65a04f5c4a3b3", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted final message claims verification happened, and curl already succeeded. That quote does not support premature_termination as the verifier failure."}
+{"case_id": "12e45dde1f3c951d", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted command includes nohup, which undercuts the claim that nohup was missing. Persistence still failed."}
+{"case_id": "0d8f22065d06564e", "evidence_supported": false, "annotator": "drbz", "notes": "Final 'Done' summary is real, but it does not support L4 missing verification. Gold is L1: agent reset the repo and deleted hello.html at step 31."}
+{"case_id": "44aaef41f12f756d", "evidence_supported": false, "annotator": "drbz", "notes": "Judge FAILED (quote not in step 9). No usable evidence."}
+{"case_id": "8edadbc06c9d2808", "evidence_supported": false, "annotator": "drbz", "notes": "nohup start at step 19 is real, but the L4 claim that the final summary caused verifier failure is not what the hidden tests check. Server was not up."}
+{"case_id": "11b8f00887a55323", "evidence_supported": true, "annotator": "drbz", "notes": "gather/cleanup quote is in /app/run.py and matches the hidden test (Cleaned up. count 0). Category L3 vs gold L2 is wrong, but the quote supports the failing implementation."}
+{"case_id": "a3c04a9fa3c2775b", "evidence_supported": true, "annotator": "drbz", "notes": "str_replace miss and SyntaxError are in the trace. They support a tool-edit failure, not the sanitizer being too weak on XSS. Partial support of a real event."}
+{"case_id": "7aa7b4fa-765b-40e2-96c3-c0fa81e10cb5", "evidence_supported": false, "annotator": "drbz", "notes": "TIMEOUT with no ATIF trajectory. Rule correctly refused to invent a root step; there is no evidence quote."}
+{"case_id": "6586f09047114aa1", "evidence_supported": false, "annotator": "drbz", "notes": "WAL listing quote is real but does not support L1 'assumed WAL was unencrypted' as the earliest cause. Gold is L2 guessed recovered.json at step 59."}
+{"case_id": "c15dc425-a3e0-4174-a829-a6d404b08b9c", "evidence_supported": true, "annotator": "drbz", "notes": "Exception text includes apt-get exit 100. Supports H-E."}
+{"case_id": "f1b61336-055b-4eac-86aa-842cc3306117", "evidence_supported": true, "annotator": "drbz", "notes": "Exception text includes apt-get failure. Supports H-E."}
+{"case_id": "4da6a648f0981d0d", "evidence_supported": true, "annotator": "drbz", "notes": "Quoted cancel/cleanup code is in /app/run.py and matches test_tasks_cancel_above_max_concurrent. Category L3 vs gold L2."}
+{"case_id": "c18980290dc9c4e5", "evidence_supported": false, "annotator": "drbz", "notes": "Judge FAILED (quote not in step 2). No usable evidence."}
+{"case_id": "91e4358e895f41ef", "evidence_supported": true, "annotator": "drbz", "notes": "Quoted guessed apple/banana rows at step 113 are in the trace and match wal-was-decrypted / completeness failures."}
+{"case_id": "97e4383a4fb0f6bc", "evidence_supported": false, "annotator": "drbz", "notes": "Judge FAILED (quote not in step 30). No usable evidence."}
+{"case_id": "0e192016e959d9bb", "evidence_supported": true, "annotator": "drbz", "notes": "git log quote shows rewritten hashes; original d6987af is gone. Supports history-rewrite over-sanitization. Root step 56 vs gold 41 (filter-branch)."}
+{"case_id": "1cb20470-5616-4f42-851f-046d0b9eea38", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose exception quotes address-pool exhaustion. Supports H-E."}
+{"case_id": "468d6446-f376-4f4c-a9b4-49dafda5583d", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose exception quotes address-pool exhaustion. Supports H-E."}
+{"case_id": "b8629365-8480-4c98-b8b3-623a94abd171", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose exception quotes address-pool exhaustion. Supports H-E."}
+{"case_id": "0f30c038-022e-47ea-b3e5-1f01c89705a0", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose exception quotes address-pool exhaustion. Supports H-E."}
+{"case_id": "0d1fa09b1874481d", "evidence_supported": false, "annotator": "drbz", "notes": "Final summary is real, but the agent already checked alive at step 3. Quote does not support L4 missing verification. Gold is L3 daemonization at step 2."}
+{"case_id": "0d6c829488c2805a", "evidence_supported": false, "annotator": "drbz", "notes": "Final summary is real. In-session alive check exists. Not missing verification."}
+{"case_id": "62f3234fb89a39d1", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted 'server will remain active' does not support L4. curl already succeeded; process did not last until verifier."}
+{"case_id": "1886120cad8c81f2", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted end-of-task summary does not support the verifier failure. Health curl succeeded in-session."}
+{"case_id": "009445a107e6c445", "evidence_supported": false, "annotator": "drbz", "notes": "Quoted running-server summary is real but does not support L4. Gold is L3 persistence at the start-server step."}
+{"case_id": "35ed92bc-403d-4f1e-a6ee-42f074c23cad", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose build exception is in result.json. Supports H-E."}
+{"case_id": "77f9c58e-5ac2-463b-a27a-baf82922f0cf", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose exception is in result.json. Supports H-E."}
+{"case_id": "50fc3acc-f547-45e0-93c3-d4ceb0ab81c4", "evidence_supported": true, "annotator": "drbz", "notes": "Docker compose exception is in result.json. Supports H-E."}

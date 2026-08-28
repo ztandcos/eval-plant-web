@@ -1,0 +1,42 @@
+suite: coding-agent-regression
+
+baseline:
+  name: dsh-flash
+  agent: dsh
+  model: deepseek/deepseek-v4-flash
+
+candidates:
+  - name: dsh-pro
+    agent: dsh
+    model: deepseek/deepseek-v4-pro
+
+benchmarks:
+  - name: terminal-bench@2.0
+    tasks:
+      - kv-store-grpc
+      - nginx-request-logging
+      - openssl-selfsigned-cert
+      - fix-git
+      - sqlite-db-truncate
+      - sanitize-git-repo
+      - configure-git-webserver
+      - regex-log
+      - log-summary-date-ranges
+      - cancel-async-tasks
+      - filter-js-from-html
+      - db-wal-recovery
+
+trials: 3
+concurrency: 6
+sandbox: docker
+env: [DEEPSEEK_API_KEY]
+metrics: [pass@1, pass@3, cost, latency]
+judge_model: deepseek-v4-pro
+diagnose_mode: all_failures
+diagnose_all_trials: true
+
+gate:
+  k: 1
+  pass_at_1_drop: 0.02
+  max_regressions: 3
+  cost_increase: 0.20

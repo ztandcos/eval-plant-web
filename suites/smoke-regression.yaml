@@ -1,0 +1,24 @@
+suite: evalplant-smoke-regression
+
+baseline:
+  name: oracle
+  agent: oracle
+
+candidates:
+  - name: nop
+    agent: nop
+
+benchmarks:
+  - path: ../evals
+    tasks: [smoke-file]
+
+trials: 1
+concurrency: 1
+sandbox: docker
+metrics: [pass@1, cost, latency]
+judge_model: not-called
+
+gate:
+  pass_at_1_drop: 0.0
+  max_regressions: 0
+  cost_increase: 0.20

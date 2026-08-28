@@ -33,6 +33,7 @@ def harbor_trial(
     reward=0.0,
     trajectory_id=None,
     agent_name="dsh",
+    exception_info=None,
 ) -> Path:
     trial = job / trial_name
     agent = trial / "agent"
@@ -101,6 +102,11 @@ def harbor_trial(
                     "n_output_tokens": 20,
                 },
                 "verifier_result": {"rewards": {"task": reward}},
+                **(
+                    {"exception_info": exception_info}
+                    if exception_info
+                    else {}
+                ),
             }
         ),
         encoding="utf-8",
@@ -247,6 +253,54 @@ class PipelineTest(unittest.TestCase):
             )
             connection.close()
 
+    def test_infra_outcome_only_is_harness_h_e(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "result.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "trial_name": "openssl-selfsigned-cert__x",
+                        "exception_info": {
+                            "exception_type": "RuntimeError",
+                            "exception_message": (
+                                "all predefined address pools have been fully subnetted"
+                            ),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            from evalplant.judge import diagnose_outcome_only
+
+            result = diagnose_outcome_only(
+                path, "INFRA_ERROR", "INFRA_ERROR", "not-called"
+            )
+            self.assertEqual(result["status"], "ATTRIBUTED")
+            self.assertEqual(result["responsibility"], "HARNESS")
+            self.assertEqual(result["category_code"], "H-E")
+            self.assertEqual(result["trajectory_mode"], "OUTCOME_ONLY")
+            self.assertIn("subnetted", result["summary"])
+
+            build = Path(temp) / "build.json"
+            build.write_text(
+                json.dumps(
+                    {
+                        "trial_name": "json-merge__x",
+                        "exception_info": {
+                            "exception_type": "RuntimeError",
+                            "exception_message": (
+                                "Docker compose build failed. #1 load build context"
+                            ),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            build_result = diagnose_outcome_only(
+                build, "INFRA_ERROR", "INFRA_ERROR", "not-called"
+            )
+            self.assertEqual(build_result["category_code"], "H-E")
+
     def test_database_has_evaluation_tables(self):
         with tempfile.TemporaryDirectory() as temp:
             connection = connect(Path(temp) / "evalplant.db")
@@ -267,6 +321,8 @@ class PipelineTest(unittest.TestCase):
                     "checks",
                     "steps",
                     "diagnoses",
+                    "suite_runs",
+                    "suite_baselines",
                 },
             )
             connection.close()
@@ -312,6 +368,70 @@ class PipelineTest(unittest.TestCase):
             )
             connection.close()
 
+    def test_imports_exception_only_harbor_result_without_trajectory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trial = root / "job" / "needle-context__abc"
+            (trial / "agent").mkdir(parents=True)
+            (trial / "result.json").write_text(
+                json.dumps(
+                    {
+                        "id": "trial-exc",
+                        "task_name": "evals/needle-context",
+                        "trial_name": "needle-context__abc",
+                        "agent_info": {
+                            "name": "dsh",
+                            "version": "0.1",
+                            "model_info": {"name": "deepseek"},
+                        },
+                        "agent_result": None,
+                        "verifier_result": None,
+                        "exception_info": {
+                            "exception_type": "NonZeroAgentExitCodeError",
+                            "exception_message": "agent exited 1",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, root / "job", "exc")[0]
+            row = connection.execute(
+                "SELECT * FROM trajectories WHERE id=?", (trajectory_id,)
+            ).fetchone()
+            self.assertEqual(row["verdict"], "INFRA_ERROR")
+            self.assertEqual(row["health_status"], "INFRA_ERROR")
+            self.assertEqual(row["source_schema_version"], "harbor-result-v1")
+            self.assertEqual(row["raw_path"], str((trial / "result.json").resolve()))
+            connection.close()
+
+    def test_live_import_updates_the_same_harbor_trial(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw_path = harbor_run(root)
+            result_path = raw_path.parent.parent / "result.json"
+            result = result_path.read_text(encoding="utf-8")
+            result_path.unlink()
+            connection = connect(root / "evalplant.db")
+
+            trajectory_id = import_run(connection, root / "job", "live")[0]
+            save_diagnosis(connection, trajectory_id, attributed_payload())
+            result_path.write_text(result, encoding="utf-8")
+            updated_id = import_run(connection, root / "job", "live")[0]
+
+            self.assertEqual(updated_id, trajectory_id)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM trajectories").fetchone()[0],
+                1,
+            )
+            row = connection.execute("SELECT * FROM trajectories").fetchone()
+            self.assertEqual(row["task_id"], "terminal-bench/task::task__trial")
+            self.assertEqual(row["verdict"], "FAIL")
+            self.assertIsNone(
+                connection.execute("SELECT * FROM diagnoses").fetchone()
+            )
+            connection.close()
+
     def test_explicit_verifier_checks_are_validated(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -340,6 +460,44 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(outcome["status"], "PASS")
             self.assertEqual(check["name"], "file-created")
             self.assertEqual(check["status"], "PASS")
+            connection.close()
+
+    def test_ctrf_tests_become_deterministic_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw_path = harbor_run(root, reward=1.0)
+            ctrf = raw_path.parent.parent / "verifier" / "ctrf.json"
+            ctrf.write_text(
+                json.dumps(
+                    {
+                        "results": {
+                            "tests": [
+                                {"name": "test_file", "status": "passed"},
+                                {
+                                    "name": "test_behavior",
+                                    "status": "failed",
+                                    "message": "wrong output",
+                                },
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            connection = connect(root / "evalplant.db")
+            trajectory_id = import_run(connection, root / "job", "ctrf")[0]
+            checks = connection.execute(
+                "SELECT name, status FROM checks WHERE trajectory_id=? ORDER BY name",
+                (trajectory_id,),
+            ).fetchall()
+            self.assertEqual(
+                [(row["name"], row["status"]) for row in checks],
+                [
+                    ("reward:task", "PASS"),
+                    ("test:test_behavior", "FAIL"),
+                    ("test:test_file", "PASS"),
+                ],
+            )
             connection.close()
 
     def test_missing_tool_result_is_harness_rule(self):
@@ -613,6 +771,9 @@ class PipelineTest(unittest.TestCase):
                 "analyze",
                 "report",
                 "compare",
+                "eval",
+                "resume",
+                "baseline",
             },
         )
 

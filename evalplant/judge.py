@@ -247,12 +247,19 @@ def match_harness_rule(facts: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if facts["health_status"] != "INFRA_ERROR":
         return None
 
-    if re.search(r"verifier|grader|reward|test[-_ ]?runner", lowered):
+    if re.search(
+        r"docker|compose|address pools|subnetted|apt-get|apt update|"
+        r"failed to create network|image .*building",
+        lowered,
+    ):
+        code, component, rule = "H-E", "execution_runtime", "execution_exception"
+    elif re.search(r"verifier|grader|reward|test[-_ ]?runner", lowered):
         code, component, rule = "H-V", "verifier", "verifier_exception"
     elif re.search(r"tool|function|mcp|schema|argument", lowered):
         code, component, rule = "H-T", "tool_adapter", "tooling_exception"
     elif re.search(
-        r"context|prompt|history|memory|token.{0,20}(?:limit|length)|truncat", lowered
+        r"context|prompt|history|memory|token.{0,20}(?:limit|length)|truncat",
+        lowered,
     ):
         code, component, rule = "H-C", "context_builder", "context_exception"
     elif re.search(r"trace|trajectory|telemetry|log|seriali|deseriali", lowered):
@@ -579,6 +586,50 @@ def unavailable_trajectory_diagnosis(
     )
     result.pop("diagnosis_error", None)
     return result
+
+
+def diagnose_outcome_only(
+    raw_path: Path,
+    verdict: str,
+    health_status: str,
+    model: Optional[str] = None,
+    max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    result_path = raw_path
+    if raw_path.is_file():
+        try:
+            payload = read_json(raw_path)
+        except (OSError, ValueError):
+            payload = {}
+    if raw_path.name != "result.json":
+        alternative = raw_path.parent.parent / "result.json"
+        if alternative.is_file():
+            payload = read_json(alternative)
+            result_path = alternative
+    exception = payload.get("exception_info") or {}
+    if health_status == "INFRA_ERROR" or verdict == "INFRA_ERROR":
+        facts = {
+            "verdict": verdict,
+            "health_status": health_status,
+            "missing_tool_results": [],
+            "context_truncation_markers": [],
+            "exception_type": str(exception.get("exception_type") or ""),
+            "exception_message": str(
+                exception.get("exception_message") or exception.get("message") or ""
+            ),
+            "result_path": str(result_path),
+            "verifier_present": bool(payload.get("verifier_result")),
+        }
+        ruled = match_harness_rule(facts)
+        if ruled:
+            ruled["max_input_tokens"] = max_input_tokens
+            ruled["diagnosis_config_hash"] = (
+                diagnosis_config_hash(model, max_input_tokens) if model else None
+            )
+            ruled["trajectory_mode"] = "OUTCOME_ONLY"
+            return ruled
+    return unavailable_trajectory_diagnosis(model, max_input_tokens)
 
 
 def _judge_payload(

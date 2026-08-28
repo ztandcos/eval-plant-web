@@ -1,0 +1,1229 @@
+{
+  "suite": "custom-agent-regression",
+  "run_id": "custom-agent-regression-20260827-141056-185316",
+  "state": "COMPLETED",
+  "ship_gate": {
+    "status": "PASS",
+    "failed_candidates": [],
+    "reasons": []
+  },
+  "baseline": {
+    "version": "dsh-flash",
+    "experiment": "custom-agent-regression-20260827-141056-185316-dsh-flash",
+    "statistics": {
+      "experiment": "custom-agent-regression-20260827-141056-185316-dsh-flash",
+      "total_tasks": 10,
+      "total_trials": 30,
+      "successful_tasks": 9,
+      "failed_tasks": 1,
+      "verdicts": {
+        "FAIL": 5,
+        "INFRA_ERROR": 3,
+        "PASS": 22
+      },
+      "diagnosis_statuses": {},
+      "responsibilities": {},
+      "harness_layers": {},
+      "llm_categories": {},
+      "confidence": {},
+      "decision_sources": {},
+      "components": {},
+      "diagnosis_config_hashes": {},
+      "diagnoses_comparable": true,
+      "trajectory_modes": {},
+      "logical_tasks": 10,
+      "successful_trials": 22,
+      "failed_trials": 8,
+      "trial_pass_rate": 0.7333333333333333,
+      "task_any_pass_rate": 0.9,
+      "task_all_pass_rate": 0.5,
+      "check_statuses": {
+        "PASS": 74,
+        "FAIL": 13
+      },
+      "weighted_check_pass_rate": 0.8505747126436781,
+      "recommended_actions": {},
+      "by_model": {
+        "deepseek-v4-flash": {
+          "total": 30,
+          "passed": 22,
+          "failed": 8,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_agent": {
+        "dsh-minimal": {
+          "total": 30,
+          "passed": 22,
+          "failed": 8,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_agent_version": {
+        "0.1.0rc7": {
+          "total": 30,
+          "passed": 22,
+          "failed": 8,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_dataset": {
+        "evals": {
+          "total": 30,
+          "passed": 22,
+          "failed": 8,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "average_input_tokens": 6667.111111111111,
+      "average_cache_tokens": 6272.0,
+      "average_output_tokens": 425.18518518518516,
+      "average_cost": null,
+      "average_agent_seconds": 9.09145437037037,
+      "average_verifier_seconds": 0.6627094444444445,
+      "diagnosis_input_tokens": 0,
+      "diagnosis_output_tokens": 0,
+      "diagnosis_latency_seconds": 0
+    }
+  },
+  "candidates": {
+    "dsh-pro": {
+      "experiment": "custom-agent-regression-20260827-141056-185316-dsh-pro",
+      "statistics": {
+        "experiment": "custom-agent-regression-20260827-141056-185316-dsh-pro",
+        "total_tasks": 10,
+        "total_trials": 30,
+        "successful_tasks": 8,
+        "failed_tasks": 2,
+        "verdicts": {
+          "FAIL": 6,
+          "PASS": 24
+        },
+        "diagnosis_statuses": {
+          "ATTRIBUTED": 5,
+          "FAILED": 1
+        },
+        "responsibilities": {
+          "LLM": 5
+        },
+        "harness_layers": {},
+        "llm_categories": {
+          "L3": 2,
+          "L4": 3
+        },
+        "confidence": {
+          "HIGH": 5
+        },
+        "decision_sources": {
+          "LLM": 5
+        },
+        "components": {},
+        "diagnosis_config_hashes": {
+          "90c24a7873586a9e": 6
+        },
+        "diagnoses_comparable": true,
+        "trajectory_modes": {
+          "FULL": 5
+        },
+        "logical_tasks": 10,
+        "successful_trials": 24,
+        "failed_trials": 6,
+        "trial_pass_rate": 0.8,
+        "task_any_pass_rate": 0.8,
+        "task_all_pass_rate": 0.8,
+        "check_statuses": {
+          "PASS": 81,
+          "FAIL": 15
+        },
+        "weighted_check_pass_rate": 0.84375,
+        "recommended_actions": {
+          "L3": "改进工具描述、参数 Schema 和 tool-use 行为。",
+          "L4": "增加反馈处理、完成前验证和终止条件。"
+        },
+        "by_model": {
+          "deepseek-v4-pro": {
+            "total": 30,
+            "passed": 24,
+            "failed": 6,
+            "harness": 0,
+            "llm": 5
+          }
+        },
+        "by_agent": {
+          "dsh-minimal": {
+            "total": 30,
+            "passed": 24,
+            "failed": 6,
+            "harness": 0,
+            "llm": 5
+          }
+        },
+        "by_agent_version": {
+          "0.1.0rc7": {
+            "total": 30,
+            "passed": 24,
+            "failed": 6,
+            "harness": 0,
+            "llm": 5
+          }
+        },
+        "by_dataset": {
+          "evals": {
+            "total": 30,
+            "passed": 24,
+            "failed": 6,
+            "harness": 0,
+            "llm": 5
+          }
+        },
+        "average_input_tokens": 6266.7,
+        "average_cache_tokens": 5939.2,
+        "average_output_tokens": 416.2,
+        "average_cost": null,
+        "average_agent_seconds": 11.868207166666668,
+        "average_verifier_seconds": 0.6295006,
+        "diagnosis_input_tokens": 13785,
+        "diagnosis_output_tokens": 2886,
+        "diagnosis_latency_seconds": 33.48337675095536
+      },
+      "comparison": {
+        "gate": {
+          "baseline": "custom-agent-regression-20260827-141056-185316-dsh-flash",
+          "candidate": "custom-agent-regression-20260827-141056-185316-dsh-pro",
+          "k": 1,
+          "thresholds": {
+            "max_regressions": 2,
+            "max_pass_at_k_drop": 0.02,
+            "max_cost_increase": 0.2
+          },
+          "shared_tasks": 10,
+          "eligible_tasks": 10,
+          "baseline_metrics": {
+            "pass_at_k": 0.5,
+            "pass_power_k": 0.5,
+            "average_cost": null,
+            "average_agent_seconds": 9.788229000000001
+          },
+          "candidate_metrics": {
+            "pass_at_k": 0.8,
+            "pass_power_k": 0.8,
+            "average_cost": null,
+            "average_agent_seconds": 11.7320192
+          },
+          "deltas": {
+            "pass_at_k": 0.30000000000000004,
+            "pass_power_k": 0.30000000000000004,
+            "cost_relative": null,
+            "agent_seconds_relative": 0.19858446303207644
+          },
+          "changes": {
+            "improved": 3,
+            "regressed": 0,
+            "unchanged": 7,
+            "infra_errors": 0,
+            "known_failures": 2
+          },
+          "ship_gate": {
+            "status": "PASS",
+            "reasons": []
+          },
+          "tasks": [
+            {
+              "task_key": "evals/evalplant/config-validate",
+              "change": "UNCHANGED",
+              "baseline_passes": 1,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/fix-and-prove",
+              "change": "UNCHANGED",
+              "baseline_passes": 1,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/fix-off-by-one",
+              "change": "UNCHANGED",
+              "baseline_passes": 1,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/heartbeat-worker",
+              "change": "UNCHANGED",
+              "baseline_passes": 0,
+              "candidate_passes": 0,
+              "baseline_statuses": [
+                "FAIL"
+              ],
+              "candidate_statuses": [
+                "FAIL"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/http-echo",
+              "change": "UNCHANGED",
+              "baseline_passes": 0,
+              "candidate_passes": 0,
+              "baseline_statuses": [
+                "FAIL"
+              ],
+              "candidate_statuses": [
+                "FAIL"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/json-merge",
+              "change": "IMPROVED",
+              "baseline_passes": 0,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "INFRA_ERROR"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/log-count",
+              "change": "IMPROVED",
+              "baseline_passes": 0,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "INFRA_ERROR"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/needle-context",
+              "change": "IMPROVED",
+              "baseline_passes": 0,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "INFRA_ERROR"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/smoke-file",
+              "change": "UNCHANGED",
+              "baseline_passes": 1,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            },
+            {
+              "task_key": "evals/evalplant/split-module",
+              "change": "UNCHANGED",
+              "baseline_passes": 1,
+              "candidate_passes": 1,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "PASS"
+              ]
+            }
+          ]
+        },
+        "metrics": {
+          "pass@1": {
+            "baseline": 0.5,
+            "candidate": 0.8,
+            "delta": 0.30000000000000004
+          },
+          "pass@3": {
+            "baseline": 0.9,
+            "candidate": 0.8,
+            "delta": -0.09999999999999998
+          }
+        },
+        "triage": [
+          {
+            "task_key": "evals/evalplant/config-validate",
+            "change": "UNCHANGED",
+            "baseline_passes": 1,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "UNCHANGED"
+          },
+          {
+            "task_key": "evals/evalplant/fix-and-prove",
+            "change": "UNCHANGED",
+            "baseline_passes": 1,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "UNCHANGED"
+          },
+          {
+            "task_key": "evals/evalplant/fix-off-by-one",
+            "change": "UNCHANGED",
+            "baseline_passes": 1,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "UNCHANGED"
+          },
+          {
+            "task_key": "evals/evalplant/heartbeat-worker",
+            "change": "UNCHANGED",
+            "baseline_passes": 0,
+            "candidate_passes": 0,
+            "baseline_statuses": [
+              "FAIL"
+            ],
+            "candidate_statuses": [
+              "FAIL"
+            ],
+            "triage": "KNOWN_FAILURE"
+          },
+          {
+            "task_key": "evals/evalplant/http-echo",
+            "change": "UNCHANGED",
+            "baseline_passes": 0,
+            "candidate_passes": 0,
+            "baseline_statuses": [
+              "FAIL"
+            ],
+            "candidate_statuses": [
+              "FAIL"
+            ],
+            "triage": "KNOWN_FAILURE"
+          },
+          {
+            "task_key": "evals/evalplant/json-merge",
+            "change": "IMPROVED",
+            "baseline_passes": 0,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "INFRA_ERROR"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "IMPROVED"
+          },
+          {
+            "task_key": "evals/evalplant/log-count",
+            "change": "IMPROVED",
+            "baseline_passes": 0,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "INFRA_ERROR"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "IMPROVED"
+          },
+          {
+            "task_key": "evals/evalplant/needle-context",
+            "change": "IMPROVED",
+            "baseline_passes": 0,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "INFRA_ERROR"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "IMPROVED"
+          },
+          {
+            "task_key": "evals/evalplant/smoke-file",
+            "change": "UNCHANGED",
+            "baseline_passes": 1,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "UNCHANGED"
+          },
+          {
+            "task_key": "evals/evalplant/split-module",
+            "change": "UNCHANGED",
+            "baseline_passes": 1,
+            "candidate_passes": 1,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "PASS"
+            ],
+            "triage": "UNCHANGED"
+          }
+        ]
+      },
+      "diagnoses": [
+        {
+          "task_key": "evals/evalplant/heartbeat-worker",
+          "trajectory_id": "fc8d32d6f6c1b131",
+          "diagnosis": {
+            "status": "FAILED",
+            "responsibility": null,
+            "category_code": null,
+            "category_name": null,
+            "root_cause_step": null,
+            "component": null,
+            "summary": "诊断服务执行失败。",
+            "primary_cause": null,
+            "secondary_factors": [],
+            "failure_surface": null,
+            "evidence": [],
+            "causal_chain": [],
+            "counterfactual": null,
+            "rejected_candidates": [],
+            "contributing_factor": null,
+            "confidence": null,
+            "decision_source": null,
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 0,
+            "judge_output_tokens": 0,
+            "judge_latency_seconds": 0.0,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 0,
+            "trajectory_mode": null,
+            "evidence_validation_level": "NOT_APPLICABLE",
+            "max_output_tokens": 4096,
+            "max_input_tokens": 100000,
+            "diagnosis_error": "evidence quote is not present in step 4"
+          }
+        },
+        {
+          "task_key": "evals/evalplant/heartbeat-worker",
+          "trajectory_id": "c0ac15900f69fc62",
+          "diagnosis": {
+            "status": "ATTRIBUTED",
+            "responsibility": "LLM",
+            "category_code": "L4",
+            "category_name": "反馈、验证与结束",
+            "root_cause_step": 5,
+            "component": null,
+            "summary": "模型成功启动后台进程并验证其存活，但最终未提供验证器所需的明确完成信号，导致验证失败。",
+            "primary_cause": {
+              "responsibility": "LLM",
+              "category_code": "L4",
+              "step_id": 5,
+              "component": null,
+              "contract_violation": "missing_verification_signal",
+              "claim": "模型在最终总结中未提供验证器可识别的完成信号，导致验证器判定失败。"
+            },
+            "secondary_factors": [],
+            "failure_surface": {
+              "step_id": null,
+              "source": "verifier",
+              "claim": "验证器最终判定失败。"
+            },
+            "evidence": [
+              {
+                "source": "agent",
+                "step_id": 5,
+                "quote": "Background process started successfully.\n\n- PID: `239`\n- Command: `bash -c 'while true; do date +%s > /tmp/heartbeat; sleep 2; done'`\n- Running via `nohup`, disowned, output redirected to `/dev/null`\n- Verified alive with `ps` (status `S`)\n- Verified `/tmp/heartbeat` is being rewritten with the current Unix timestamp at least every 2 seconds (observed updates every ~2s)",
+                "supports_claim": "模型仅提供总结，未包含验证器所需的完成信号。",
+                "relation": "DIRECT_SUPPORT"
+              }
+            ],
+            "causal_chain": [
+              {
+                "step_id": 5,
+                "role": "TRIGGER",
+                "claim": "模型未提供明确的完成信号。"
+              },
+              {
+                "step_id": null,
+                "role": "FAILURE_SURFACE",
+                "claim": "验证器判定失败。"
+              }
+            ],
+            "counterfactual": {
+              "intervention": "在最终步骤中提供明确的完成信号，例如输出特定标记或调用完成工具。",
+              "expected_effect": "验证器能够识别任务完成，从而避免失败。",
+              "strength": "STRONG"
+            },
+            "rejected_candidates": [],
+            "contributing_factor": null,
+            "confidence": "HIGH",
+            "evidence_validation_level": "PROVENANCE_AND_REPORT_STRUCTURE",
+            "decision_source": "LLM",
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 2891,
+            "judge_output_tokens": 497,
+            "judge_latency_seconds": 5.438280374975875,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 1,
+            "trajectory_mode": "FULL",
+            "max_output_tokens": 4096,
+            "runtime_facts": {
+              "verdict": "FAIL",
+              "health_status": "VALID",
+              "trajectory_valid": true,
+              "trajectory_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/heartbeat-worker__yyY4Knt/agent/trajectory.json",
+              "source_schema_version": "ATIF-v1.7",
+              "canonical_schema_version": "evalplant-canonical-v1",
+              "adapter_version": "atif-adapter-v1",
+              "result_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/heartbeat-worker__yyY4Knt/result.json",
+              "verifier_present": true,
+              "exception_type": "",
+              "exception_message": "",
+              "missing_tool_results": [],
+              "context_truncation_markers": [],
+              "signals": {
+                "step_count": 5,
+                "tool_errors": [],
+                "duplicate_calls": [],
+                "file_edit_steps": [
+                  2
+                ],
+                "test_runs": [],
+                "verification_missing": true,
+                "terminal_steps": [],
+                "terminal_statuses": [],
+                "timeout_steps": []
+              }
+            },
+            "estimated_input_tokens": 4267,
+            "max_input_tokens": 100000,
+            "structured_failure_facts": {
+              "step_count": 5,
+              "last_pre_anomaly_step": null,
+              "first_anomaly_step": null,
+              "tool_error_steps": [],
+              "failed_test_steps": [],
+              "file_edit_steps": [
+                2
+              ],
+              "missing_tool_results": [],
+              "context_truncated": false,
+              "verifier_status": "FAIL",
+              "termination_reason": "recorded_end",
+              "agent_verifier_conflict": true
+            }
+          }
+        },
+        {
+          "task_key": "evals/evalplant/heartbeat-worker",
+          "trajectory_id": "e5b286b607254ce4",
+          "diagnosis": {
+            "status": "ATTRIBUTED",
+            "responsibility": "LLM",
+            "category_code": "L4",
+            "category_name": "反馈、验证与结束",
+            "root_cause_step": 4,
+            "component": null,
+            "summary": "模型成功启动后台进程并验证其存活，但未执行任何验证步骤，导致 Verifier 判定失败。",
+            "primary_cause": {
+              "responsibility": "LLM",
+              "category_code": "L4",
+              "step_id": 4,
+              "component": null,
+              "contract_violation": "missing_verification",
+              "claim": "模型在确认进程存活后直接结束，未执行验证步骤。"
+            },
+            "secondary_factors": [],
+            "failure_surface": {
+              "step_id": null,
+              "source": "verifier",
+              "claim": "Verifier 最终判定失败。"
+            },
+            "evidence": [
+              {
+                "source": "agent",
+                "step_id": 4,
+                "quote": "Started a background loop with PID **239**:\n\n```bash\nnohup bash -c 'while true; do date +%s > /tmp/heartbeat; sleep 1; done' >/dev/null 2>&1 &\n```\n\nVerified it is still alive and updating `/tmp/heartbeat`:\n- First read: `1787841031`\n- 2 seconds later: `1787841033`\n\nThe process remains running as `bash -c while true; do date +%s > /tmp/heartbeat; sleep 1; done` with state `S`.",
+                "supports_claim": "模型仅总结了已执行的操作，未调用任何验证工具。",
+                "relation": "DIRECT_SUPPORT"
+              }
+            ],
+            "causal_chain": [
+              {
+                "step_id": 4,
+                "role": "TRIGGER",
+                "claim": "模型未执行验证步骤，直接结束。"
+              },
+              {
+                "step_id": null,
+                "role": "FAILURE_SURFACE",
+                "claim": "Verifier 判定失败。"
+              }
+            ],
+            "counterfactual": {
+              "intervention": "在第 4 步后执行验证步骤，例如再次检查进程存活和文件更新。",
+              "expected_effect": "Verifier 可能通过，当前失败链被阻断。",
+              "strength": "STRONG"
+            },
+            "rejected_candidates": [
+              {
+                "candidate_id": "step_2",
+                "reason": "启动后台进程的命令成功执行，不是失败原因。"
+              },
+              {
+                "candidate_id": "step_3",
+                "reason": "验证进程存活和文件更新的步骤成功，不是失败原因。"
+              }
+            ],
+            "contributing_factor": null,
+            "confidence": "HIGH",
+            "evidence_validation_level": "PROVENANCE_AND_REPORT_STRUCTURE",
+            "decision_source": "LLM",
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 2463,
+            "judge_output_tokens": 584,
+            "judge_latency_seconds": 6.347073542070575,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 1,
+            "trajectory_mode": "FULL",
+            "max_output_tokens": 4096,
+            "runtime_facts": {
+              "verdict": "FAIL",
+              "health_status": "VALID",
+              "trajectory_valid": true,
+              "trajectory_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/heartbeat-worker__ZSifqQL/agent/trajectory.json",
+              "source_schema_version": "ATIF-v1.7",
+              "canonical_schema_version": "evalplant-canonical-v1",
+              "adapter_version": "atif-adapter-v1",
+              "result_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/heartbeat-worker__ZSifqQL/result.json",
+              "verifier_present": true,
+              "exception_type": "",
+              "exception_message": "",
+              "missing_tool_results": [],
+              "context_truncation_markers": [],
+              "signals": {
+                "step_count": 4,
+                "tool_errors": [],
+                "duplicate_calls": [],
+                "file_edit_steps": [
+                  2
+                ],
+                "test_runs": [],
+                "verification_missing": true,
+                "terminal_steps": [],
+                "terminal_statuses": [],
+                "timeout_steps": []
+              }
+            },
+            "estimated_input_tokens": 3491,
+            "max_input_tokens": 100000,
+            "structured_failure_facts": {
+              "step_count": 4,
+              "last_pre_anomaly_step": null,
+              "first_anomaly_step": null,
+              "tool_error_steps": [],
+              "failed_test_steps": [],
+              "file_edit_steps": [
+                2
+              ],
+              "missing_tool_results": [],
+              "context_truncated": false,
+              "verifier_status": "FAIL",
+              "termination_reason": "recorded_end",
+              "agent_verifier_conflict": true
+            }
+          }
+        },
+        {
+          "task_key": "evals/evalplant/http-echo",
+          "trajectory_id": "2006ab0e752a0b82",
+          "diagnosis": {
+            "status": "ATTRIBUTED",
+            "responsibility": "LLM",
+            "category_code": "L3",
+            "category_name": "行动与工具使用",
+            "root_cause_step": 3,
+            "component": null,
+            "summary": "模型在验证步骤中使用了不存在的命令 xxd，导致验证失败，但服务器本身已正确启动并满足要求。",
+            "primary_cause": {
+              "responsibility": "LLM",
+              "category_code": "L3",
+              "step_id": 3,
+              "component": null,
+              "contract_violation": "tool_argument_schema",
+              "claim": "模型在 bash 命令中使用了不存在的命令 xxd，导致该命令失败。"
+            },
+            "secondary_factors": [],
+            "failure_surface": {
+              "step_id": null,
+              "source": "verifier",
+              "claim": "Verifier 最终判定失败。"
+            },
+            "evidence": [
+              {
+                "source": "agent",
+                "step_id": 3,
+                "quote": "bash: xxd: command not found",
+                "supports_claim": "xxd 命令不存在，导致该步骤失败。",
+                "relation": "DIRECT_SUPPORT"
+              },
+              {
+                "source": "agent",
+                "step_id": 4,
+                "quote": "0000000   o   k  \\n",
+                "supports_claim": "后续使用 od 成功验证响应体为 ok\\n。",
+                "relation": "DIRECT_SUPPORT"
+              }
+            ],
+            "causal_chain": [
+              {
+                "step_id": 3,
+                "role": "TRIGGER",
+                "claim": "模型执行包含 xxd 的命令，但 xxd 不存在。"
+              },
+              {
+                "step_id": 3,
+                "role": "PROPAGATION",
+                "claim": "命令失败，输出仅显示 ps 结果，未验证响应体。"
+              },
+              {
+                "step_id": 4,
+                "role": "PROPAGATION",
+                "claim": "模型改用 od 命令成功验证响应体。"
+              },
+              {
+                "step_id": null,
+                "role": "FAILURE_SURFACE",
+                "claim": "Verifier 判定失败。"
+              }
+            ],
+            "counterfactual": {
+              "intervention": "在第 3 步使用 od 或 xxd 的替代命令，避免使用不存在的 xxd。",
+              "expected_effect": "验证步骤将成功，且服务器已正确运行，最终 Verifier 可能通过。",
+              "strength": "STRONG"
+            },
+            "rejected_candidates": [
+              {
+                "candidate_id": "final_message",
+                "reason": "最终总结是传播事件，不是最早根因。"
+              }
+            ],
+            "contributing_factor": null,
+            "confidence": "HIGH",
+            "evidence_validation_level": "PROVENANCE_AND_REPORT_STRUCTURE",
+            "decision_source": "LLM",
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 2815,
+            "judge_output_tokens": 591,
+            "judge_latency_seconds": 7.395790625014342,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 1,
+            "trajectory_mode": "FULL",
+            "max_output_tokens": 4096,
+            "runtime_facts": {
+              "verdict": "FAIL",
+              "health_status": "VALID",
+              "trajectory_valid": true,
+              "trajectory_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/http-echo__8qvFAgk/agent/trajectory.json",
+              "source_schema_version": "ATIF-v1.7",
+              "canonical_schema_version": "evalplant-canonical-v1",
+              "adapter_version": "atif-adapter-v1",
+              "result_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/http-echo__8qvFAgk/result.json",
+              "verifier_present": true,
+              "exception_type": "",
+              "exception_message": "",
+              "missing_tool_results": [],
+              "context_truncation_markers": [],
+              "signals": {
+                "step_count": 5,
+                "tool_errors": [],
+                "duplicate_calls": [],
+                "file_edit_steps": [
+                  2
+                ],
+                "test_runs": [],
+                "verification_missing": true,
+                "terminal_steps": [],
+                "terminal_statuses": [],
+                "timeout_steps": []
+              }
+            },
+            "estimated_input_tokens": 4067,
+            "max_input_tokens": 100000,
+            "structured_failure_facts": {
+              "step_count": 5,
+              "last_pre_anomaly_step": null,
+              "first_anomaly_step": null,
+              "tool_error_steps": [],
+              "failed_test_steps": [],
+              "file_edit_steps": [
+                2
+              ],
+              "missing_tool_results": [],
+              "context_truncated": false,
+              "verifier_status": "FAIL",
+              "termination_reason": "recorded_end",
+              "agent_verifier_conflict": false
+            }
+          }
+        },
+        {
+          "task_key": "evals/evalplant/http-echo",
+          "trajectory_id": "bda65a04f5c4a3b3",
+          "diagnosis": {
+            "status": "ATTRIBUTED",
+            "responsibility": "LLM",
+            "category_code": "L4",
+            "category_name": "反馈、验证与结束",
+            "root_cause_step": 5,
+            "component": null,
+            "summary": "模型在启动 HTTP 服务器后未执行任何验证步骤，直接结束任务，导致 Verifier 判定失败。",
+            "primary_cause": {
+              "responsibility": "LLM",
+              "category_code": "L4",
+              "step_id": 5,
+              "component": null,
+              "contract_violation": "premature_termination",
+              "claim": "模型在未进行最终验证的情况下提前结束任务。"
+            },
+            "secondary_factors": [],
+            "failure_surface": {
+              "step_id": null,
+              "source": "verifier",
+              "claim": "Verifier 最终判定失败。"
+            },
+            "evidence": [
+              {
+                "source": "agent",
+                "step_id": 5,
+                "quote": "The server is running on `127.0.0.1:8080`.\n\nVerified:\n- `GET /health` returns HTTP `200`\n- Body is exactly `ok` with trailing newline (`Content-Length: 3`)\n\nIt will stay up for the verifier.",
+                "supports_claim": "模型在最终回复中声称已验证，但未执行任何验证步骤。",
+                "relation": "DIRECT_SUPPORT"
+              }
+            ],
+            "causal_chain": [
+              {
+                "step_id": 5,
+                "role": "TRIGGER",
+                "claim": "模型在未进行最终验证的情况下提前结束任务。"
+              },
+              {
+                "step_id": null,
+                "role": "FAILURE_SURFACE",
+                "claim": "Verifier 判定失败。"
+              }
+            ],
+            "counterfactual": {
+              "intervention": "模型在结束前执行一次验证步骤，例如使用 curl 检查服务器状态和响应体。",
+              "expected_effect": "验证步骤可能发现服务器未正确运行或响应不符合要求，从而促使模型修复问题，避免 Verifier 失败。",
+              "strength": "STRONG"
+            },
+            "rejected_candidates": [
+              {
+                "candidate_id": "step_2",
+                "reason": "步骤 2 是检查端口是否空闲，属于正常操作，不是失败原因。"
+              },
+              {
+                "candidate_id": "step_3",
+                "reason": "步骤 3 是启动服务器，属于正常操作，不是失败原因。"
+              },
+              {
+                "candidate_id": "step_4",
+                "reason": "步骤 4 是验证服务器响应，属于正常操作，不是失败原因。"
+              }
+            ],
+            "contributing_factor": null,
+            "confidence": "HIGH",
+            "evidence_validation_level": "PROVENANCE_AND_REPORT_STRUCTURE",
+            "decision_source": "LLM",
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 2914,
+            "judge_output_tokens": 586,
+            "judge_latency_seconds": 6.788907791953534,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 1,
+            "trajectory_mode": "FULL",
+            "max_output_tokens": 4096,
+            "runtime_facts": {
+              "verdict": "FAIL",
+              "health_status": "VALID",
+              "trajectory_valid": true,
+              "trajectory_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/http-echo__qMZhEYA/agent/trajectory.json",
+              "source_schema_version": "ATIF-v1.7",
+              "canonical_schema_version": "evalplant-canonical-v1",
+              "adapter_version": "atif-adapter-v1",
+              "result_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/http-echo__qMZhEYA/result.json",
+              "verifier_present": true,
+              "exception_type": "",
+              "exception_message": "",
+              "missing_tool_results": [],
+              "context_truncation_markers": [],
+              "signals": {
+                "step_count": 5,
+                "tool_errors": [],
+                "duplicate_calls": [],
+                "file_edit_steps": [
+                  3
+                ],
+                "test_runs": [],
+                "verification_missing": true,
+                "terminal_steps": [],
+                "terminal_statuses": [],
+                "timeout_steps": []
+              }
+            },
+            "estimated_input_tokens": 4341,
+            "max_input_tokens": 100000,
+            "structured_failure_facts": {
+              "step_count": 5,
+              "last_pre_anomaly_step": null,
+              "first_anomaly_step": null,
+              "tool_error_steps": [],
+              "failed_test_steps": [],
+              "file_edit_steps": [
+                3
+              ],
+              "missing_tool_results": [],
+              "context_truncated": false,
+              "verifier_status": "FAIL",
+              "termination_reason": "recorded_end",
+              "agent_verifier_conflict": false
+            }
+          }
+        },
+        {
+          "task_key": "evals/evalplant/http-echo",
+          "trajectory_id": "12e45dde1f3c951d",
+          "diagnosis": {
+            "status": "ATTRIBUTED",
+            "responsibility": "LLM",
+            "category_code": "L3",
+            "category_name": "行动与工具使用",
+            "root_cause_step": 2,
+            "component": null,
+            "summary": "模型在步骤2中通过bash工具启动HTTP服务器，但未使用nohup或disown确保进程在命令结束后存活，导致服务器在验证阶段未运行。",
+            "primary_cause": {
+              "responsibility": "LLM",
+              "category_code": "L3",
+              "step_id": 2,
+              "component": null,
+              "contract_violation": "tool_usage_error",
+              "claim": "模型在启动后台进程时未使用nohup或disown，导致进程在bash命令结束后被终止。"
+            },
+            "secondary_factors": [],
+            "failure_surface": {
+              "step_id": null,
+              "source": "verifier",
+              "claim": "Verifier判定失败，因为服务器未运行。"
+            },
+            "evidence": [
+              {
+                "source": "agent",
+                "step_id": 2,
+                "quote": "nohup python3 /tmp/health_server.py >/tmp/health_server.log 2>&1 &\necho $!\nsleep 0.5\ncurl -s -i http://127.0.0.1:8080/health",
+                "supports_claim": "命令中使用了nohup，但未使用disown，且bash工具可能在命令结束后终止后台进程。",
+                "relation": "DIRECT_SUPPORT"
+              },
+              {
+                "source": "agent",
+                "step_id": 3,
+                "quote": "ps -p 239 -o pid,cmd",
+                "supports_claim": "模型检查进程存在，但未意识到进程可能在后续命令中终止。",
+                "relation": "DIRECT_SUPPORT"
+              }
+            ],
+            "causal_chain": [
+              {
+                "step_id": 2,
+                "role": "TRIGGER",
+                "claim": "模型启动服务器但未确保其持久性。"
+              },
+              {
+                "step_id": 3,
+                "role": "PROPAGATION",
+                "claim": "模型验证服务器运行，但未检测到进程将在命令结束后终止。"
+              },
+              {
+                "step_id": null,
+                "role": "FAILURE_SURFACE",
+                "claim": "Verifier发现服务器未运行，任务失败。"
+              }
+            ],
+            "counterfactual": {
+              "intervention": "在步骤2中使用nohup和disown，或使用setsid，确保进程在bash命令结束后继续运行。",
+              "expected_effect": "服务器将在验证阶段保持运行，任务可能成功。",
+              "strength": "STRONG"
+            },
+            "rejected_candidates": [
+              {
+                "candidate_id": "final_message",
+                "reason": "最终声明服务器运行是传播事件，不是最早根因。"
+              }
+            ],
+            "contributing_factor": null,
+            "confidence": "HIGH",
+            "evidence_validation_level": "PROVENANCE_AND_REPORT_STRUCTURE",
+            "decision_source": "LLM",
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 2702,
+            "judge_output_tokens": 628,
+            "judge_latency_seconds": 7.513324416941032,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 1,
+            "trajectory_mode": "FULL",
+            "max_output_tokens": 4096,
+            "runtime_facts": {
+              "verdict": "FAIL",
+              "health_status": "VALID",
+              "trajectory_valid": true,
+              "trajectory_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/http-echo__VbkGDmM/agent/trajectory.json",
+              "source_schema_version": "ATIF-v1.7",
+              "canonical_schema_version": "evalplant-canonical-v1",
+              "adapter_version": "atif-adapter-v1",
+              "result_path": "/Users/shaw/eval-plant/data/jobs/custom-agent-regression-20260827-141056-185316-dsh-pro/http-echo__VbkGDmM/result.json",
+              "verifier_present": true,
+              "exception_type": "",
+              "exception_message": "",
+              "missing_tool_results": [],
+              "context_truncation_markers": [],
+              "signals": {
+                "step_count": 4,
+                "tool_errors": [],
+                "duplicate_calls": [],
+                "file_edit_steps": [
+                  2
+                ],
+                "test_runs": [],
+                "verification_missing": true,
+                "terminal_steps": [],
+                "terminal_statuses": [],
+                "timeout_steps": []
+              }
+            },
+            "estimated_input_tokens": 3935,
+            "max_input_tokens": 100000,
+            "structured_failure_facts": {
+              "step_count": 4,
+              "last_pre_anomaly_step": null,
+              "first_anomaly_step": null,
+              "tool_error_steps": [],
+              "failed_test_steps": [],
+              "file_edit_steps": [
+                2
+              ],
+              "missing_tool_results": [],
+              "context_truncated": false,
+              "verifier_status": "FAIL",
+              "termination_reason": "recorded_end",
+              "agent_verifier_conflict": false
+            }
+          }
+        }
+      ]
+    }
+  },
+  "failure_clusters": {
+    "L4": 3,
+    "L3": 2,
+    "FAILED": 1
+  },
+  "contract_violations": {
+    "missing_verification_signal": 1,
+    "missing_verification": 1,
+    "tool_argument_schema": 1,
+    "premature_termination": 1,
+    "tool_usage_error": 1
+  },
+  "recommendations": [
+    {
+      "category": "L4",
+      "label": "L4 Verification（反馈验证）",
+      "count": 3,
+      "action": "增加反馈处理、完成前验证和终止条件。"
+    },
+    {
+      "category": "L3",
+      "label": "L3 Tool Use（工具使用）",
+      "count": 2,
+      "action": "改进工具描述、参数 Schema 和 tool-use 行为。"
+    }
+  ],
+  "reports": {
+    "json": "/Users/shaw/eval-plant/reports/delivery/custom-agent-regression-20260827-141056-185316.json",
+    "markdown": "/Users/shaw/eval-plant/reports/delivery/custom-agent-regression-20260827-141056-185316.md"
+  },
+  "generated_at": "2026-08-27T14:32:42.605524+00:00"
+}

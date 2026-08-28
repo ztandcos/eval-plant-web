@@ -1,0 +1,1 @@
+`/app/calc.py` is wrong: `add` should add and `mul` should multiply. Fix the functions. Before you stop, run `python3 /app/run_tests.py` and make sure it prints `ok`. The verifier will run the same tests.

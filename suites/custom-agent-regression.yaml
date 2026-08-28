@@ -1,0 +1,40 @@
+suite: custom-agent-regression
+
+baseline:
+  name: dsh-flash
+  agent: dsh
+  model: deepseek/deepseek-v4-flash
+
+candidates:
+  - name: dsh-pro
+    agent: dsh
+    model: deepseek/deepseek-v4-pro
+
+benchmarks:
+  - path: ../evals
+    tasks:
+      - smoke-file
+      - fix-off-by-one
+      - split-module
+      - json-merge
+      - log-count
+      - http-echo
+      - heartbeat-worker
+      - needle-context
+      - config-validate
+      - fix-and-prove
+
+trials: 3
+concurrency: 3
+sandbox: docker
+env: [DEEPSEEK_API_KEY]
+metrics: [pass@1, pass@3, cost, latency]
+judge_model: deepseek-v4-pro
+diagnose_mode: all_failures
+diagnose_all_trials: true
+
+gate:
+  k: 1
+  pass_at_1_drop: 0.02
+  max_regressions: 2
+  cost_increase: 0.20

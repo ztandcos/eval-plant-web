@@ -51,10 +51,7 @@ async def test_matching_preinstalled_sdk_skips_heavy_install(tmp_path) -> None:
 
     await agent.install(environment)
 
-    ensure_dependencies.assert_awaited_once()
-    if ensure_dependencies.await_args is None:
-        raise AssertionError("dependency check was not awaited")
-    assert ensure_dependencies.await_args.args[1] == ("bash", "coreutils")
+    ensure_dependencies.assert_not_awaited()
     exec_as_agent.assert_not_awaited()
     assert environment.upload_file.await_count == 2
     assert exec_as_root.await_count == 2

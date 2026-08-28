@@ -1,0 +1,34 @@
+suite: custom-oracle-check
+
+baseline:
+  name: oracle
+  agent: oracle
+
+candidates:
+  - name: oracle-repeat
+    agent: oracle
+
+benchmarks:
+  - path: ../evals
+    tasks:
+      - smoke-file
+      - fix-off-by-one
+      - split-module
+      - json-merge
+      - log-count
+      - http-echo
+      - heartbeat-worker
+      - needle-context
+      - config-validate
+      - fix-and-prove
+
+trials: 1
+concurrency: 4
+sandbox: docker
+metrics: [pass@1]
+judge_model: not-called
+
+gate:
+  pass_at_1_drop: 0.0
+  max_regressions: 0
+  cost_increase: 1.0

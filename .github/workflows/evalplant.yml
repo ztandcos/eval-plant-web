@@ -1,0 +1,74 @@
+name: Agent evaluation
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --python 3.12
+      - run: uv sync --project harbor --python 3.12 --no-dev
+      - name: Restore production baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/ci-evalplant.db
+            reports/ci/
+          key: evalplant-baseline-${{ github.run_id }}
+          restore-keys: |
+            evalplant-baseline-
+      - name: Choose suite
+        id: suite
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" || -z "$DEEPSEEK_API_KEY" ]]; then
+            echo "name=smoke" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "name=coding-agent-regression" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=custom-ci" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run suite
+        run: |
+          mkdir -p reports/ci data
+          uv run evalplant --db data/ci-evalplant.db eval "${{ steps.suite.outputs.name }}" --output-dir reports/ci
+      - name: Save production baseline
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/ci-evalplant.db
+            reports/ci/
+          key: evalplant-baseline-${{ github.run_id }}
+      - name: Comment on pull request
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          report=$(ls -t reports/ci/*.md 2>/dev/null | head -1 || true)
+          if [[ -n "$report" ]]; then
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file "$report"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evalplant-baseline-and-reports
+          path: |
+            data/ci-evalplant.db
+            reports/ci/
+          if-no-files-found: ignore
+          retention-days: 90

@@ -71,6 +71,15 @@ uv sync --python 3.12
 uv sync --project harbor --python 3.12 --no-dev
 ```
 
+完整回归评测优先使用 Suite 名或 YAML：
+
+```bash
+uv run evalplant eval smoke
+uv run evalplant eval coding-agent-regression
+```
+
+Suite 会自动复用已登记的 production baseline，运行候选版本，导入 Outcome、CTRF 测试级 Check、成本、延迟和轨迹，按 Task 配对计算 pass@k，只诊断新回归并生成 JSON/Markdown Ship Gate 报告。中断后运行 `evalplant resume RUN_ID`；候选正式发布后用 `evalplant baseline --suite SUITE --set EXPERIMENT --version VERSION` 提升为新基线。PR、Nightly 和 Release 示例见 `.github/workflows/evalplant.yml`，配置字段与边界见 [PLATFORM_PLAN.md](PLATFORM_PLAN.md)。
+
 主命令只描述评测矩阵：
 
 ```bash

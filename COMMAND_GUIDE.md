@@ -1,6 +1,6 @@
 # EvalPlant 完整运行教程
 
-这份文档从一台刚拿到项目的 Mac 开始讲，主示例使用 Terminal-Bench 2.0 的真实任务 `kv-store-grpc`。正常使用时只需要记住 `evalplant bench`：你告诉 EvalPlant 用哪个 Agent、跑哪个 Bench、选哪道题和哪种沙盒，它会在内部调用仓库自带的 Harbor，任务一结束就运行 Verifier；通过的任务直接记为 PASS，失败的任务马上进入归因，最后写入 SQLite 并生成一份 JSON 总报告。
+这份文档从一台刚拿到项目的 Mac 开始讲。日常自动化评测用 `evalplant eval`：写一份 Suite YAML，系统自己展开 Baseline/Candidate、调用 Harbor、导入 Outcome、配对比较、只诊断新回归，并给出 Ship Gate。单次手工矩阵仍可用 `evalplant bench`。主示例使用 Terminal-Bench 2.0 的真实任务 `kv-store-grpc`。
 
 ## 一、第一次使用前准备
 
@@ -36,7 +36,51 @@ export DEEPSEEK_API_KEY
 
 这个 Key 同时供两个角色使用：`dsh` Agent 用 DeepSeek 做任务；任务失败时，Judge 也用 DeepSeek 分析轨迹。Key 只通过环境变量传递，不会被展开写进 Job JSON 或进程参数。关闭当前终端后变量自动失效。
 
-## 二、亲手跑一个真实 Terminal-Bench 任务
+## 二、自动评测闭环：`eval`
+
+第一次建议先跑仓库内不联网、不花钱的 smoke 套件，确认 Docker、Harbor 和报告链路：
+
+```bash
+uv run evalplant eval smoke --output-dir reports/acceptance
+```
+
+`smoke` 会解析成 `suites/smoke.yaml`。它用 Oracle 跑 `evals/smoke-file`：Agent 只要写出 `/app/answer.txt`，Verifier 用本地 shell 和 CTRF 判分，不执行 `apt` 或下载。第一次运行会把 Oracle 登记为该套件的 production baseline；之后只跑 Candidate，并自动配对比较。
+
+回归套件的完整形态是：
+
+```bash
+uv run evalplant eval coding-agent-regression
+```
+
+Suite 负责声明版本、Benchmark、任务范围、重复次数、并发、指标和门禁。系统会：
+
+1. 复用或建立 production baseline
+2. 按 Agent × Benchmark × k 展开实验
+3. 让 Harbor 并发执行并实时导入 Outcome / Check / Cost / Latency / Trajectory
+4. 计算 pass@k、成本和延迟
+5. 把失败分成 INFRA_ERROR / KNOWN_FAILURE / NEW_REGRESSION
+6. 只对 NEW_REGRESSION 做归因
+7. 按门禁输出 JSON 和 Markdown 报告
+
+中断后不要重开一个新 run，直接恢复：
+
+```bash
+uv run evalplant resume RUN_ID
+```
+
+候选通过门禁并准备发布时，才提升基线：
+
+```bash
+uv run evalplant baseline --suite coding-agent-regression --set EXPERIMENT --version v19
+```
+
+PR 冒烟、Nightly 完整回归和 Release 门禁共用这一条命令，工作流见 `.github/workflows/evalplant.yml`。`eval` 在 Ship Gate 失败时返回退出码 1，所以 CI 可以直接把评测当发布门禁。
+
+### `eval` 参数
+
+位置参数可以是 `suites/` 下的名字，也可以是 YAML 路径。`--output-dir` 写 JSON/Markdown 报告，默认在数据库同级的 `suite-reports/`。`--harbor` 覆盖内置 Harbor 二进制。`--refresh-baseline` 强制重跑 YAML 里的 baseline 并覆盖 production 记录。`--poll-seconds` 控制导入间隔，默认 2。
+
+## 三、亲手跑一个真实 Terminal-Bench 任务
 
 先做一次不花钱的配置预览：
 
@@ -101,7 +145,7 @@ data/tbench-kv-store-grpc-dsh-report.json
 
 数据库保存实验、Task、Trial、Outcome、Check、步骤索引和诊断。`jobs/` 保存 Harbor 原始作业目录，包括轨迹、Verifier 日志和生命周期事件。报告 JSON 是最适合给程序、网页后台或面试演示读取的汇总，顶层包含 `statistics`、`trials` 和 `diagnoses`：`statistics` 是总体指标，`trials` 是每次真实运行与检查项，`diagnoses` 只包含失败 Trial 的完整归因。
 
-## 三、`bench` 主命令的所有参数
+## 四、`bench` 主命令的所有参数
 
 完整写法是：
 
@@ -157,9 +201,9 @@ uv run evalplant bench \
 
 不同供应商 Agent 通常需要不同模型名，当前一个 `--agent-model` 会应用给所有 Agent，因此跨供应商比较最好拆成两个 experiment，再用 `compare` 配对，不要硬塞进一条命令。
 
-## 四、其余命令：什么时候用、每个参数是什么
+## 五、其余命令：什么时候用、每个参数是什么
 
-这些命令不会取代 `bench`。它们用于你已经有 Harbor Job、ATIF 轨迹或数据库实验时做复盘和排障。
+这些命令不会取代 `eval`。它们用于你已经有 Harbor Job、ATIF 轨迹或数据库实验时做复盘和排障。单次手工矩阵仍用 `bench`。
 
 ### 查看版本和总帮助
 
@@ -170,6 +214,32 @@ uv run evalplant bench --help
 ```
 
 `--version` 打印当前 EvalPlant 版本。`--help` 不改文件、不访问网络；放在某个子命令后就查看该命令参数。
+
+### `eval`：Suite 编排、比较、门禁
+
+```bash
+uv run evalplant eval smoke
+uv run evalplant eval suites/coding-agent-regression.yaml --output-dir reports/ci
+```
+
+位置参数是套件名或 YAML。`--output-dir`、`--harbor`、`--refresh-baseline`、`--poll-seconds` 见第二节。Ship Gate 失败时退出码为 1。
+
+### `resume`：从中断的 Suite Run 继续
+
+```bash
+uv run evalplant resume RUN_ID
+```
+
+`RUN_ID` 是上一次 `eval` 打印的 run id。已完成的 Baseline/Candidate 不会重跑；Harbor 会按原生 job resume 续跑未完成 Trial。
+
+### `baseline`：查看或提升生产基线
+
+```bash
+uv run evalplant baseline --suite coding-agent-regression
+uv run evalplant baseline --suite coding-agent-regression --set EXPERIMENT --version v19
+```
+
+`--suite` 必填。不带 `--set` 时只打印当前 production baseline。`--set` 把某个已有 experiment 提升为该套件的基线，`--version` 是给人看的版本名。
 
 ### `run`：已有数据的一体化处理
 
@@ -280,7 +350,7 @@ uv run python -m evalplant.evaluation \
 
 `--gold` 是人工金标 JSONL。`--predictions` 至少一份报告；传多份时还会计算同样本重复运行的一致率。`--reviews` 是可选人工证据语义审核。它输出覆盖率、责任/类别/根因步骤准确率、邻近步骤准确率、拒答数、证据支持率和稳定性，不修改数据库。
 
-## 五、诊断状态到底是什么意思
+## 六、诊断状态到底是什么意思
 
 任务结果和诊断结果是两件事。任务结果来自 Verifier：`PASS` 是做对，`FAIL` 是做错，`TIMEOUT` 是 Agent 超时，`INFRA_ERROR` 是执行基础设施异常，`UNKNOWN/INCOMPLETE` 是结果不足。
 
@@ -288,7 +358,7 @@ uv run python -m evalplant.evaluation \
 
 责任为 `HARNESS` 时使用 H-E 到 H-G 七层；责任为 `LLM` 时使用 L1 到 L4 四类。完整定义见 `DIAGNOSIS_SPEC.md`。SQLite 每张表和每个字段的含义见 `SQLITE_DATA_DICTIONARY.md`。
 
-## 六、最常见问题
+## 七、最常见问题
 
 出现 `Judge returned an empty response`，说明任务执行结果已经保存，但 Judge 服务这次返回了空内容。系统会把诊断记为 `FAILED`，不会丢掉 Outcome。先检查 Key、模型名和 DeepSeek 服务状态，再用 `analyze --trajectory ID --force` 只重试这一条，不要重跑整个 Bench。
 
@@ -302,7 +372,7 @@ uv sync --project harbor --python 3.12 --no-dev
 
 第一次跑某道 Terminal-Bench 题会下载题目、拉取或构建镜像，并在容器中安装 DSH SDK，所以明显比第二次慢。`kv-store-grpc` 的成功或失败不是固定的：模型具有运行波动；通过就不会产生诊断，失败才会展示完整归因，这正是系统的真实行为。
 
-## 七、开发者验收命令
+## 八、开发者验收命令
 
 正常使用不需要执行这些。修改 EvalPlant 后运行：
 

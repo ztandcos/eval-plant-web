@@ -1,0 +1,1 @@
+Refactor `/app/app.py`. Create `/app/util.py` with a function `normalize(name)` that strips whitespace and lowercases the string. `app.py` must import and use `normalize` from `util`. `python3 /app/app.py` must still print `hi:ada`.

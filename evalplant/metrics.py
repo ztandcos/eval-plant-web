@@ -142,11 +142,17 @@ def compare_experiments(
     candidate_id: str,
     k: int = 1,
     max_cost_increase: float = 0.2,
+    max_regressions: int = 0,
+    max_pass_at_k_drop: float = 0.0,
 ) -> Dict[str, Any]:
     if k <= 0:
         raise ValueError("k must be positive")
     if max_cost_increase < 0:
         raise ValueError("max_cost_increase must be non-negative")
+    if max_regressions < 0:
+        raise ValueError("max_regressions must be non-negative")
+    if max_pass_at_k_drop < 0:
+        raise ValueError("max_pass_at_k_drop must be non-negative")
     baseline = _trial_groups(connection, baseline_id)
     candidate = _trial_groups(connection, candidate_id)
     if not baseline:
@@ -191,6 +197,12 @@ def compare_experiments(
                 "candidate_passes": sum(
                     row["status"] == "PASS" for row in selected(candidate, key)
                 ),
+                "baseline_statuses": [
+                    row["status"] for row in selected(baseline, key)
+                ],
+                "candidate_statuses": [
+                    row["status"] for row in selected(candidate, key)
+                ],
             }
         )
     baseline_rows = [row for key in eligible for row in selected(baseline, key)]
@@ -206,16 +218,24 @@ def compare_experiments(
     pass_at_k_baseline = _rate(baseline_any)
     pass_at_k_candidate = _rate(candidate_any)
     reasons = []
-    if regressions:
-        reasons.append("%s shared task(s) regressed" % regressions)
-    if pass_at_k_candidate < pass_at_k_baseline:
-        reasons.append("candidate pass@k is lower than baseline")
+    if regressions > max_regressions:
+        reasons.append(
+            "%s shared task(s) regressed; limit is %s"
+            % (regressions, max_regressions)
+        )
+    if pass_at_k_baseline - pass_at_k_candidate > max_pass_at_k_drop:
+        reasons.append("candidate pass@k drop exceeded threshold")
     if cost_change is not None and cost_change > max_cost_increase:
         reasons.append("candidate average cost increased beyond threshold")
     return {
         "baseline": baseline_id,
         "candidate": candidate_id,
         "k": k,
+        "thresholds": {
+            "max_regressions": max_regressions,
+            "max_pass_at_k_drop": max_pass_at_k_drop,
+            "max_cost_increase": max_cost_increase,
+        },
         "shared_tasks": len(shared),
         "eligible_tasks": len(eligible),
         "baseline_metrics": {

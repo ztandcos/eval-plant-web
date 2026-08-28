@@ -216,6 +216,39 @@ class HarborAdapterTest(unittest.TestCase):
             report = json.loads((root / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["statistics"]["failed_tasks"], 1)
 
+    def test_bench_rejects_an_existing_experiment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tasks = root / "tasks"
+            tasks.mkdir()
+            db = root / "evalplant.db"
+            connection = connect(db)
+            connection.execute(
+                "INSERT INTO experiments VALUES (?, ?, ?, ?)",
+                ("existing", None, None, "now"),
+            )
+            connection.commit()
+            connection.close()
+            launched = []
+
+            with patch.object(cli, "launch_harbor", launched.append):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "bench",
+                        "--agent",
+                        "dsh",
+                        "--bench",
+                        str(tasks),
+                        "--experiment",
+                        "existing",
+                    ]
+                )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(launched, [])
+
     def test_list_and_missing_agent_are_evalplant_errors(self):
         with tempfile.TemporaryDirectory() as temp:
             db = str(Path(temp) / "evalplant.db")

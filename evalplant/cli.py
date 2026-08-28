@@ -39,7 +39,7 @@ from .judge import (
     DEFAULT_MAX_INPUT_TOKENS,
     analyze_trajectory,
     failed_diagnosis,
-    unavailable_trajectory_diagnosis,
+    diagnose_outcome_only,
 )
 from .metrics import compare_experiments, report
 
@@ -224,7 +224,13 @@ def _diagnose_trajectory(
     max_input_tokens: int,
 ) -> Dict[str, Any]:
     if trajectory["source_schema_version"] == "harbor-result-v1":
-        result = unavailable_trajectory_diagnosis(model, max_input_tokens)
+        result = diagnose_outcome_only(
+            Path(trajectory["raw_path"]),
+            trajectory["verdict"],
+            trajectory["health_status"],
+            model,
+            max_input_tokens,
+        )
     else:
         try:
             result = analyze_trajectory(
@@ -554,6 +560,73 @@ def command_compare(args: argparse.Namespace, connection: sqlite3.Connection) ->
     )
 
 
+def _print_suite_result(payload: Dict[str, Any]) -> None:
+    markdown = payload.get("reports", {}).get("markdown")
+    if markdown and Path(markdown).exists():
+        console.print(Path(markdown).read_text(encoding="utf-8"))
+    console.print(
+        Panel(
+            "run=%s\ngate=%s\nreasons=%s"
+            % (
+                payload["run_id"],
+                payload["ship_gate"]["status"],
+                "; ".join(payload["ship_gate"].get("reasons") or []) or "none",
+            ),
+            title=payload["suite"],
+        )
+    )
+
+
+def _suite_exit_code(payload: Dict[str, Any]) -> int:
+    return 0 if payload["ship_gate"]["status"] == "PASS" else 1
+
+
+def command_eval(args: argparse.Namespace, connection: sqlite3.Connection) -> int:
+    from .pipeline import EvalPipeline, resolve_suite_path
+
+    pipeline = EvalPipeline(
+        connection,
+        _path(args.db),
+        suite_path=resolve_suite_path(args.suite),
+        output_dir=_path(args.output_dir) if args.output_dir else None,
+        harbor_binary=_path(args.harbor) if args.harbor else None,
+        refresh_baseline=args.refresh_baseline,
+        poll_seconds=args.poll_seconds,
+    )
+    payload = pipeline.run()
+    _print_suite_result(payload)
+    return _suite_exit_code(payload)
+
+
+def command_resume(args: argparse.Namespace, connection: sqlite3.Connection) -> int:
+    from .pipeline import EvalPipeline
+
+    pipeline = EvalPipeline(
+        connection,
+        _path(args.db),
+        run_id=args.run_id,
+        harbor_binary=_path(args.harbor) if args.harbor else None,
+        poll_seconds=args.poll_seconds,
+    )
+    payload = pipeline.run()
+    _print_suite_result(payload)
+    return _suite_exit_code(payload)
+
+
+def command_baseline(args: argparse.Namespace, connection: sqlite3.Connection) -> None:
+    from .pipeline import get_baseline, promote_baseline
+
+    if args.set_experiment:
+        result = promote_baseline(
+            connection, args.suite, args.set_experiment, args.version_name
+        )
+    else:
+        result = get_baseline(connection, args.suite)
+        if result is None:
+            raise ValueError("No production baseline recorded for %s" % args.suite)
+    console.print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def _print_ok(row: sqlite3.Row) -> None:
     console.print("[bold green]OK[/bold green]    %s  PASS" % _display_task(row))
 
@@ -799,6 +872,17 @@ def command_bench(args: argparse.Namespace, connection: sqlite3.Connection) -> N
         agent_kwargs=_parse_agent_kwargs(args.agent_kwarg),
         force_build=args.force_build,
     )
+    job_dir = job_dir_from_config(config)
+    if not args.print_config and (
+        connection.execute(
+            "SELECT 1 FROM experiments WHERE id=?", (experiment,)
+        ).fetchone()
+        or job_dir.exists()
+    ):
+        raise ValueError(
+            "Experiment %s already exists; choose a new --experiment name"
+            % experiment
+        )
     config_path = write_job_config(
         config, jobs_dir / ("%s.evalplant.json" % experiment)
     )
@@ -806,7 +890,6 @@ def command_bench(args: argparse.Namespace, connection: sqlite3.Connection) -> N
     if args.print_config:
         console.print(json.dumps(config, ensure_ascii=False, indent=2))
         return
-    job_dir = job_dir_from_config(config)
     binary = Path(args.harbor) if args.harbor else find_harbor_binary()
     console.print(
         "Launching [bold]%s[/bold] × [bold]%s[/bold] in %s"
@@ -1020,6 +1103,34 @@ def parser() -> argparse.ArgumentParser:
     sub.set_defaults(handler=command_bench)
 
     sub = commands.add_parser(
+        "eval",
+        help="Run a named or YAML evaluation suite and apply its ship gate",
+    )
+    sub.add_argument(
+        "suite",
+        help="Suite YAML path or name under suites/, for example smoke",
+    )
+    sub.add_argument("--output-dir", help="Directory for JSON and Markdown reports")
+    sub.add_argument("--harbor", help="Path to the harbor binary")
+    sub.add_argument("--refresh-baseline", action="store_true")
+    sub.add_argument("--poll-seconds", type=float, default=2.0)
+    sub.set_defaults(handler=command_eval)
+
+    sub = commands.add_parser("resume", help="Resume an interrupted suite run")
+    sub.add_argument("run_id")
+    sub.add_argument("--harbor", help="Path to the harbor binary")
+    sub.add_argument("--poll-seconds", type=float, default=2.0)
+    sub.set_defaults(handler=command_resume)
+
+    sub = commands.add_parser(
+        "baseline", help="Show or promote a suite production baseline"
+    )
+    sub.add_argument("--suite", required=True)
+    sub.add_argument("--set", dest="set_experiment")
+    sub.add_argument("--version", dest="version_name")
+    sub.set_defaults(handler=command_baseline)
+
+    sub = commands.add_parser(
         "run",
         help="Import, diagnose failures, and report; watch live Harbor jobs",
     )
@@ -1083,8 +1194,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     connection = None
     try:
         connection = connect(_path(args.db))
-        args.handler(args, connection)
-        return 0
+        result = args.handler(args, connection)
+        return result if isinstance(result, int) else 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
         error_console.print("[bold red]Error:[/bold red] %s" % error)
         return 1

@@ -1,0 +1,318 @@
+{
+  "suite": "evalplant-smoke-regression",
+  "run_id": "evalplant-smoke-regression-20260827-111532-871906",
+  "state": "COMPLETED",
+  "ship_gate": {
+    "status": "FAIL",
+    "failed_candidates": [
+      "nop"
+    ],
+    "reasons": [
+      "candidate pass@k drop exceeded threshold",
+      "1 new regression(s); limit is 0"
+    ]
+  },
+  "baseline": {
+    "version": "oracle",
+    "experiment": "evalplant-smoke-regression-20260827-111532-871906-oracle",
+    "statistics": {
+      "experiment": "evalplant-smoke-regression-20260827-111532-871906-oracle",
+      "total_tasks": 1,
+      "total_trials": 1,
+      "successful_tasks": 1,
+      "failed_tasks": 0,
+      "verdicts": {
+        "PASS": 1
+      },
+      "diagnosis_statuses": {},
+      "responsibilities": {},
+      "harness_layers": {},
+      "llm_categories": {},
+      "confidence": {},
+      "decision_sources": {},
+      "components": {},
+      "diagnosis_config_hashes": {},
+      "diagnoses_comparable": true,
+      "trajectory_modes": {},
+      "logical_tasks": 1,
+      "successful_trials": 1,
+      "failed_trials": 0,
+      "trial_pass_rate": 1.0,
+      "task_any_pass_rate": 1.0,
+      "task_all_pass_rate": 1.0,
+      "check_statuses": {
+        "PASS": 3
+      },
+      "weighted_check_pass_rate": 1.0,
+      "recommended_actions": {},
+      "by_model": {
+        "UNKNOWN": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_agent": {
+        "oracle": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_agent_version": {
+        "1.0.0": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_dataset": {
+        "evals": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "average_input_tokens": null,
+      "average_cache_tokens": null,
+      "average_output_tokens": null,
+      "average_cost": null,
+      "average_agent_seconds": 0.298455,
+      "average_verifier_seconds": 0.287899,
+      "diagnosis_input_tokens": 0,
+      "diagnosis_output_tokens": 0,
+      "diagnosis_latency_seconds": 0
+    }
+  },
+  "candidates": {
+    "nop": {
+      "experiment": "evalplant-smoke-regression-20260827-111532-871906-nop",
+      "statistics": {
+        "experiment": "evalplant-smoke-regression-20260827-111532-871906-nop",
+        "total_tasks": 1,
+        "total_trials": 1,
+        "successful_tasks": 0,
+        "failed_tasks": 1,
+        "verdicts": {
+          "FAIL": 1
+        },
+        "diagnosis_statuses": {
+          "UNDETERMINED": 1
+        },
+        "responsibilities": {},
+        "harness_layers": {},
+        "llm_categories": {},
+        "confidence": {},
+        "decision_sources": {
+          "RULE": 1
+        },
+        "components": {},
+        "diagnosis_config_hashes": {
+          "c9ebd6127ede5e57": 1
+        },
+        "diagnoses_comparable": true,
+        "trajectory_modes": {
+          "OUTCOME_ONLY": 1
+        },
+        "logical_tasks": 1,
+        "successful_trials": 0,
+        "failed_trials": 1,
+        "trial_pass_rate": 0.0,
+        "task_any_pass_rate": 0.0,
+        "task_all_pass_rate": 0.0,
+        "check_statuses": {
+          "FAIL": 3
+        },
+        "weighted_check_pass_rate": 0.0,
+        "recommended_actions": {},
+        "by_model": {
+          "UNKNOWN": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 0
+          }
+        },
+        "by_agent": {
+          "nop": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 0
+          }
+        },
+        "by_agent_version": {
+          "1.0.0": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 0
+          }
+        },
+        "by_dataset": {
+          "evals": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 0
+          }
+        },
+        "average_input_tokens": null,
+        "average_cache_tokens": null,
+        "average_output_tokens": null,
+        "average_cost": null,
+        "average_agent_seconds": 0.000132,
+        "average_verifier_seconds": 0.308657,
+        "diagnosis_input_tokens": 0,
+        "diagnosis_output_tokens": 0,
+        "diagnosis_latency_seconds": 0.0
+      },
+      "comparison": {
+        "gate": {
+          "baseline": "evalplant-smoke-regression-20260827-111532-871906-oracle",
+          "candidate": "evalplant-smoke-regression-20260827-111532-871906-nop",
+          "k": 1,
+          "thresholds": {
+            "max_regressions": 0,
+            "max_pass_at_k_drop": 0.0,
+            "max_cost_increase": 0.2
+          },
+          "shared_tasks": 1,
+          "eligible_tasks": 1,
+          "baseline_metrics": {
+            "pass_at_k": 1.0,
+            "pass_power_k": 1.0,
+            "average_cost": null,
+            "average_agent_seconds": 0.298455
+          },
+          "candidate_metrics": {
+            "pass_at_k": 0.0,
+            "pass_power_k": 0.0,
+            "average_cost": null,
+            "average_agent_seconds": 0.000132
+          },
+          "deltas": {
+            "pass_at_k": -1.0,
+            "pass_power_k": -1.0,
+            "cost_relative": null,
+            "agent_seconds_relative": -0.9995577222696889
+          },
+          "changes": {
+            "improved": 0,
+            "regressed": 1,
+            "unchanged": 0,
+            "infra_errors": 0,
+            "known_failures": 0
+          },
+          "ship_gate": {
+            "status": "FAIL",
+            "reasons": [
+              "candidate pass@k drop exceeded threshold",
+              "1 new regression(s); limit is 0"
+            ]
+          },
+          "tasks": [
+            {
+              "task_key": "evals/evalplant/smoke-file",
+              "change": "REGRESSED",
+              "baseline_passes": 1,
+              "candidate_passes": 0,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "FAIL"
+              ]
+            }
+          ]
+        },
+        "metrics": {
+          "pass@1": {
+            "baseline": 1.0,
+            "candidate": 0.0,
+            "delta": -1.0
+          }
+        },
+        "triage": [
+          {
+            "task_key": "evals/evalplant/smoke-file",
+            "change": "REGRESSED",
+            "baseline_passes": 1,
+            "candidate_passes": 0,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "FAIL"
+            ],
+            "triage": "NEW_REGRESSION"
+          }
+        ]
+      },
+      "diagnoses": [
+        {
+          "task_key": "evals/evalplant/smoke-file",
+          "trajectory_id": "52cb62f2-000f-4820-96c6-1504a625f251",
+          "diagnosis": {
+            "status": "UNDETERMINED",
+            "responsibility": null,
+            "category_code": null,
+            "category_name": null,
+            "root_cause_step": null,
+            "component": null,
+            "summary": "Verifier 已确认任务失败，但 Agent 没有产出可供归因的轨迹。",
+            "primary_cause": null,
+            "secondary_factors": [],
+            "failure_surface": null,
+            "evidence": [],
+            "causal_chain": [],
+            "counterfactual": null,
+            "rejected_candidates": [],
+            "contributing_factor": null,
+            "confidence": null,
+            "decision_source": "RULE",
+            "matched_rule": "trajectory_unavailable",
+            "judge_model": "not-called",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "c9ebd6127ede5e57",
+            "judge_input_tokens": 0,
+            "judge_output_tokens": 0,
+            "judge_latency_seconds": 0.0,
+            "judge_thinking": "not_called",
+            "judge_temperature": 0,
+            "judge_call_count": 0,
+            "trajectory_mode": "OUTCOME_ONLY",
+            "evidence_validation_level": "NOT_APPLICABLE",
+            "max_output_tokens": 4096,
+            "max_input_tokens": 100000
+          }
+        }
+      ]
+    }
+  },
+  "failure_clusters": {
+    "UNDETERMINED": 1
+  },
+  "contract_violations": {},
+  "recommendations": [],
+  "reports": {
+    "json": "/Users/shaw/eval-plant/reports/acceptance/evalplant-smoke-regression-20260827-111532-871906.json",
+    "markdown": "/Users/shaw/eval-plant/reports/acceptance/evalplant-smoke-regression-20260827-111532-871906.md"
+  },
+  "generated_at": "2026-08-27T11:16:12.969871+00:00"
+}

@@ -16,7 +16,7 @@ from .core import (
     validate_trajectory_schema,
 )
 
-DATABASE_SCHEMA_VERSION = 6
+DATABASE_SCHEMA_VERSION = 7
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -162,6 +162,26 @@ CREATE TABLE IF NOT EXISTS attempts (
     event_count INTEGER NOT NULL DEFAULT 0,
     UNIQUE(experiment_id, trial_id),
     UNIQUE(experiment_id, trial_name, attempt_number)
+);
+
+CREATE TABLE IF NOT EXISTS suite_runs (
+    id TEXT PRIMARY KEY,
+    suite_name TEXT NOT NULL,
+    config_path TEXT,
+    config_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    progress_json TEXT NOT NULL DEFAULT '{}',
+    report_path TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS suite_baselines (
+    suite_name TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES experiments(id),
+    version_name TEXT NOT NULL,
+    promoted_at TEXT NOT NULL
 );
 """
 
@@ -715,6 +735,43 @@ def _duration_seconds(value: Any) -> Optional[float]:
     return max(0.0, (finish - start).total_seconds())
 
 
+def _ctrf_checks(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    data = read_json(path)
+    raw_tests = _mapping(data.get("results")).get("tests") or []
+    if not isinstance(raw_tests, list):
+        raise ValueError("CTRF results.tests must be a list")
+    checks = []
+    for index, item in enumerate(raw_tests, 1):
+        if not isinstance(item, dict):
+            raise ValueError("CTRF test %s must be an object" % index)
+        name = str(item.get("name") or "test-%s" % index).strip()
+        status = str(item.get("status") or "").lower()
+        mapped = {
+            "passed": "PASS",
+            "failed": "FAIL",
+            "skipped": "UNKNOWN",
+            "pending": "UNKNOWN",
+        }.get(status, "UNKNOWN")
+        evidence = item.get("message") or item.get("trace") or status
+        checks.append(
+            {
+                "name": "test:%s" % name,
+                "kind": "CODE",
+                "status": mapped,
+                "score": 1.0 if mapped == "PASS" else (0.0 if mapped == "FAIL" else None),
+                "weight": 1.0,
+                "source": "verifier/ctrf.json",
+                "evidence": str(sanitize_value(evidence))[:4000],
+            }
+        )
+    names = [item["name"] for item in checks]
+    if len(names) != len(set(names)):
+        raise ValueError("CTRF test names must be unique")
+    return checks
+
+
 def _atif_metadata(
     raw_path: Path, data: Dict[str, Any], trial_dir: Optional[Path] = None
 ) -> Dict[str, Any]:
@@ -743,6 +800,10 @@ def _atif_metadata(
     else:
         verdict, health = "UNKNOWN", "INCOMPLETE"
     evaluation = _evaluation_data(verifier, verdict, reward)
+    evaluation["checks"].extend(_ctrf_checks(trial_dir / "verifier" / "ctrf.json"))
+    names = [item["name"] for item in evaluation["checks"]]
+    if len(names) != len(set(names)):
+        raise ValueError("Verifier and CTRF check names must be unique")
     if verdict == "UNKNOWN" and evaluation["checks"]:
         statuses = {item["status"] for item in evaluation["checks"]}
         if "FAIL" in statuses:
@@ -914,7 +975,11 @@ def import_run(
         is_harbor_result = bool(
             raw_path.name == "result.json"
             and data.get("trial_name")
-            and isinstance(data.get("verifier_result"), dict)
+            and (
+                isinstance(data.get("verifier_result"), dict)
+                or data.get("exception_info")
+                or data.get("agent_result") is not None
+            )
         )
         if is_harbor_result:
             steps = []
@@ -930,10 +995,27 @@ def import_run(
                 if is_atif
                 else _legacy_metadata(raw_path, data)
             )
+        resolved_raw_path = str(raw_path.resolve())
         existing = connection.execute(
-            "SELECT id, raw_sha256 FROM trajectories WHERE experiment_id=? AND task_id=?",
+            "SELECT * FROM trajectories WHERE experiment_id=? AND task_id=?",
             (experiment_id, metadata["storage_task_id"]),
         ).fetchone()
+        path_existing = connection.execute(
+            """
+            SELECT * FROM trajectories
+            WHERE experiment_id=? AND raw_path=?
+            ORDER BY health_status='INCOMPLETE', finished_at DESC
+            LIMIT 1
+            """,
+            (experiment_id, resolved_raw_path),
+        ).fetchone()
+        if not existing:
+            existing = path_existing
+        if existing:
+            connection.execute(
+                "DELETE FROM trajectories WHERE experiment_id=? AND raw_path=? AND id!=?",
+                (experiment_id, resolved_raw_path, existing["id"]),
+            )
         trajectory_id = existing["id"] if existing else metadata["trajectory_id"]
         raw_digest = sha256_file(raw_path)
         occupied = connection.execute(
@@ -951,7 +1033,19 @@ def import_run(
         final_patch = task_dir / "final.patch"
         final_log = metadata["final_log_path"]
         raw_event = metadata["raw_event_path"]
-        same_trace = bool(existing and existing["raw_sha256"] == raw_digest)
+        same_trace = bool(
+            existing
+            and existing["raw_sha256"] == raw_digest
+            and existing["task_id"] == metadata["storage_task_id"]
+            and existing["verdict"] == metadata["verdict"]
+            and existing["health_status"] == metadata["health_status"]
+            and existing["reward"] == metadata["reward"]
+        )
+        if existing and existing["task_id"] != metadata["storage_task_id"]:
+            connection.execute(
+                "UPDATE trajectories SET task_id=? WHERE id=?",
+                (metadata["storage_task_id"], trajectory_id),
+            )
         connection.execute(
             """
             INSERT INTO trajectories (
@@ -995,7 +1089,7 @@ def import_run(
                 experiment_id,
                 metadata["storage_task_id"],
                 metadata["verdict"],
-                str(raw_path.resolve()),
+                resolved_raw_path,
                 raw_digest,
                 str(final_patch.resolve()) if final_patch.exists() else None,
                 str(final_log.resolve()) if final_log and final_log.exists() else None,

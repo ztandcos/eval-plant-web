@@ -1,0 +1,33 @@
+suite: custom-ci
+
+baseline:
+  name: dsh-flash
+  agent: dsh
+  model: deepseek/deepseek-v4-flash
+
+candidates:
+  - name: dsh-pro
+    agent: dsh
+    model: deepseek/deepseek-v4-pro
+
+benchmarks:
+  - path: ../evals
+    tasks:
+      - smoke-file
+      - fix-off-by-one
+      - json-merge
+      - log-count
+
+trials: 1
+concurrency: 2
+sandbox: docker
+env: [DEEPSEEK_API_KEY]
+metrics: [pass@1, cost, latency]
+judge_model: deepseek-v4-pro
+diagnose_mode: all_failures
+
+gate:
+  k: 1
+  pass_at_1_drop: 0.05
+  max_regressions: 2
+  cost_increase: 0.50

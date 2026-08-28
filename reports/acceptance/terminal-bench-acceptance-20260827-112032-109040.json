@@ -1,0 +1,465 @@
+{
+  "suite": "terminal-bench-acceptance",
+  "run_id": "terminal-bench-acceptance-20260827-112032-109040",
+  "state": "COMPLETED",
+  "ship_gate": {
+    "status": "FAIL",
+    "failed_candidates": [
+      "dsh-flash"
+    ],
+    "reasons": [
+      "candidate pass@k drop exceeded threshold",
+      "1 new regression(s); limit is 0"
+    ]
+  },
+  "baseline": {
+    "version": "oracle",
+    "experiment": "terminal-bench-acceptance-20260827-112032-109040-oracle",
+    "statistics": {
+      "experiment": "terminal-bench-acceptance-20260827-112032-109040-oracle",
+      "total_tasks": 1,
+      "total_trials": 1,
+      "successful_tasks": 1,
+      "failed_tasks": 0,
+      "verdicts": {
+        "PASS": 1
+      },
+      "diagnosis_statuses": {},
+      "responsibilities": {},
+      "harness_layers": {},
+      "llm_categories": {},
+      "confidence": {},
+      "decision_sources": {},
+      "components": {},
+      "diagnosis_config_hashes": {},
+      "diagnoses_comparable": true,
+      "trajectory_modes": {},
+      "logical_tasks": 1,
+      "successful_trials": 1,
+      "failed_trials": 0,
+      "trial_pass_rate": 1.0,
+      "task_any_pass_rate": 1.0,
+      "task_all_pass_rate": 1.0,
+      "check_statuses": {
+        "PASS": 8
+      },
+      "weighted_check_pass_rate": 1.0,
+      "recommended_actions": {},
+      "by_model": {
+        "UNKNOWN": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_agent": {
+        "oracle": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_agent_version": {
+        "1.0.0": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "by_dataset": {
+        "terminal-bench@2.0": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "harness": 0,
+          "llm": 0
+        }
+      },
+      "average_input_tokens": null,
+      "average_cache_tokens": null,
+      "average_output_tokens": null,
+      "average_cost": null,
+      "average_agent_seconds": 13.938352,
+      "average_verifier_seconds": 16.211007,
+      "diagnosis_input_tokens": 0,
+      "diagnosis_output_tokens": 0,
+      "diagnosis_latency_seconds": 0
+    }
+  },
+  "candidates": {
+    "dsh-flash": {
+      "experiment": "terminal-bench-acceptance-20260827-112032-109040-dsh-flash",
+      "statistics": {
+        "experiment": "terminal-bench-acceptance-20260827-112032-109040-dsh-flash",
+        "total_tasks": 1,
+        "total_trials": 1,
+        "successful_tasks": 0,
+        "failed_tasks": 1,
+        "verdicts": {
+          "FAIL": 1
+        },
+        "diagnosis_statuses": {
+          "ATTRIBUTED": 1
+        },
+        "responsibilities": {
+          "LLM": 1
+        },
+        "harness_layers": {},
+        "llm_categories": {
+          "L4": 1
+        },
+        "confidence": {
+          "HIGH": 1
+        },
+        "decision_sources": {
+          "LLM": 1
+        },
+        "components": {},
+        "diagnosis_config_hashes": {
+          "90c24a7873586a9e": 1
+        },
+        "diagnoses_comparable": true,
+        "trajectory_modes": {
+          "FULL": 1
+        },
+        "logical_tasks": 1,
+        "successful_trials": 0,
+        "failed_trials": 1,
+        "trial_pass_rate": 0.0,
+        "task_any_pass_rate": 0.0,
+        "task_all_pass_rate": 0.0,
+        "check_statuses": {
+          "PASS": 5,
+          "FAIL": 3
+        },
+        "weighted_check_pass_rate": 0.625,
+        "recommended_actions": {
+          "L4": "增加反馈处理、完成前验证和终止条件。"
+        },
+        "by_model": {
+          "deepseek-v4-flash": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 1
+          }
+        },
+        "by_agent": {
+          "dsh-minimal": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 1
+          }
+        },
+        "by_agent_version": {
+          "0.1.0rc7": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 1
+          }
+        },
+        "by_dataset": {
+          "terminal-bench@2.0": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "harness": 0,
+            "llm": 1
+          }
+        },
+        "average_input_tokens": 29746.0,
+        "average_cache_tokens": 27392.0,
+        "average_output_tokens": 2314.0,
+        "average_cost": null,
+        "average_agent_seconds": 45.217289,
+        "average_verifier_seconds": 17.641361,
+        "diagnosis_input_tokens": 9125,
+        "diagnosis_output_tokens": 871,
+        "diagnosis_latency_seconds": 13.288924749940634
+      },
+      "comparison": {
+        "gate": {
+          "baseline": "terminal-bench-acceptance-20260827-112032-109040-oracle",
+          "candidate": "terminal-bench-acceptance-20260827-112032-109040-dsh-flash",
+          "k": 1,
+          "thresholds": {
+            "max_regressions": 0,
+            "max_pass_at_k_drop": 0.0,
+            "max_cost_increase": 0.2
+          },
+          "shared_tasks": 1,
+          "eligible_tasks": 1,
+          "baseline_metrics": {
+            "pass_at_k": 1.0,
+            "pass_power_k": 1.0,
+            "average_cost": null,
+            "average_agent_seconds": 13.938352
+          },
+          "candidate_metrics": {
+            "pass_at_k": 0.0,
+            "pass_power_k": 0.0,
+            "average_cost": null,
+            "average_agent_seconds": 45.217289
+          },
+          "deltas": {
+            "pass_at_k": -1.0,
+            "pass_power_k": -1.0,
+            "cost_relative": null,
+            "agent_seconds_relative": 2.2440914822641873
+          },
+          "changes": {
+            "improved": 0,
+            "regressed": 1,
+            "unchanged": 0,
+            "infra_errors": 0,
+            "known_failures": 0
+          },
+          "ship_gate": {
+            "status": "FAIL",
+            "reasons": [
+              "candidate pass@k drop exceeded threshold",
+              "1 new regression(s); limit is 0"
+            ]
+          },
+          "tasks": [
+            {
+              "task_key": "terminal-bench@2.0/kv-store-grpc",
+              "change": "REGRESSED",
+              "baseline_passes": 1,
+              "candidate_passes": 0,
+              "baseline_statuses": [
+                "PASS"
+              ],
+              "candidate_statuses": [
+                "FAIL"
+              ]
+            }
+          ]
+        },
+        "metrics": {
+          "pass@1": {
+            "baseline": 1.0,
+            "candidate": 0.0,
+            "delta": -1.0
+          }
+        },
+        "triage": [
+          {
+            "task_key": "terminal-bench@2.0/kv-store-grpc",
+            "change": "REGRESSED",
+            "baseline_passes": 1,
+            "candidate_passes": 0,
+            "baseline_statuses": [
+              "PASS"
+            ],
+            "candidate_statuses": [
+              "FAIL"
+            ],
+            "triage": "NEW_REGRESSION"
+          }
+        ]
+      },
+      "diagnoses": [
+        {
+          "task_key": "terminal-bench@2.0/kv-store-grpc",
+          "trajectory_id": "c753ca3faa5dfa17",
+          "diagnosis": {
+            "status": "ATTRIBUTED",
+            "responsibility": "LLM",
+            "category_code": "L4",
+            "category_name": "反馈、验证与结束",
+            "root_cause_step": 10,
+            "component": null,
+            "summary": "模型在后台启动服务器后未验证其持续运行，导致验证时端口未监听，任务失败。",
+            "primary_cause": {
+              "responsibility": "LLM",
+              "category_code": "L4",
+              "step_id": 10,
+              "component": null,
+              "contract_violation": "premature_termination",
+              "claim": "模型在未确认服务器进程持续运行的情况下结束任务，导致验证时服务器已停止。"
+            },
+            "secondary_factors": [
+              {
+                "responsibility": "LLM",
+                "category_code": "L3",
+                "step_id": 6,
+                "claim": "模型使用 nohup 启动服务器，但未正确检查进程状态，导致误以为服务器仍在运行。"
+              }
+            ],
+            "failure_surface": {
+              "step_id": null,
+              "source": "verifier",
+              "claim": "Verifier 测试失败：端口 5328 未监听，gRPC 连接被拒绝。"
+            },
+            "evidence": [
+              {
+                "source": "agent",
+                "step_id": 6,
+                "quote": "bash: ps: command not found",
+                "supports_claim": "模型无法通过 ps 检查进程状态，但未采取其他验证手段。",
+                "relation": "DIRECT_SUPPORT"
+              },
+              {
+                "source": "agent",
+                "step_id": 9,
+                "quote": "initial get: 0\nset: 42\nget after: 42",
+                "supports_claim": "本地测试时服务器仍在运行，但模型未确认其持续运行。",
+                "relation": "DIRECT_SUPPORT"
+              },
+              {
+                "source": "agent",
+                "step_id": 10,
+                "quote": "Task done. Need maybe ensure server keeps running. It is.",
+                "supports_claim": "模型声称服务器保持运行，但未提供证据。",
+                "relation": "DIRECT_SUPPORT"
+              },
+              {
+                "source": "verifier",
+                "step_id": null,
+                "quote": "AssertionError: Port 5328 is not listening - no real gRPC server is running",
+                "supports_claim": "验证时服务器已停止，端口未监听。",
+                "relation": "DIRECT_SUPPORT"
+              }
+            ],
+            "causal_chain": [
+              {
+                "step_id": 6,
+                "role": "TRIGGER",
+                "claim": "模型启动服务器，但未确认其持续运行。"
+              },
+              {
+                "step_id": 9,
+                "role": "PROPAGATION",
+                "claim": "模型进行本地测试时服务器仍在运行，测试通过。"
+              },
+              {
+                "step_id": 10,
+                "role": "PROPAGATION",
+                "claim": "模型结束任务，未检查服务器是否仍在运行。"
+              },
+              {
+                "step_id": null,
+                "role": "FAILURE_SURFACE",
+                "claim": "Verifier 测试时服务器已停止，端口未监听。"
+              }
+            ],
+            "counterfactual": {
+              "intervention": "模型在结束任务前应确认服务器进程持续运行，例如使用 /proc 检查或再次测试连接。",
+              "expected_effect": "如果服务器仍在运行，验证测试将通过；如果已停止，模型可重新启动并保持运行。",
+              "strength": "STRONG"
+            },
+            "rejected_candidates": [
+              {
+                "candidate_id": "step_6_command",
+                "reason": "启动命令本身可能正确，但模型未验证进程状态，属于后续验证缺失。"
+              },
+              {
+                "candidate_id": "step_9_test",
+                "reason": "本地测试通过，但未保证服务器持续运行，不是根因。"
+              }
+            ],
+            "contributing_factor": "模型使用 nohup 启动服务器，但未正确检查进程状态，导致误以为服务器仍在运行。",
+            "confidence": "HIGH",
+            "evidence_validation_level": "PROVENANCE_AND_REPORT_STRUCTURE",
+            "decision_source": "LLM",
+            "matched_rule": null,
+            "judge_model": "deepseek-v4-pro",
+            "prompt_version": "engineering_diagnosis_v3",
+            "rule_version": "harness_rules_v2",
+            "canonical_schema_version": "evalplant-canonical-v1",
+            "adapter_version": "atif-adapter-v1",
+            "diagnosis_config_hash": "90c24a7873586a9e",
+            "judge_input_tokens": 9125,
+            "judge_output_tokens": 871,
+            "judge_latency_seconds": 13.288924749940634,
+            "judge_thinking": "disabled",
+            "judge_temperature": 0,
+            "judge_call_count": 1,
+            "trajectory_mode": "FULL",
+            "max_output_tokens": 4096,
+            "runtime_facts": {
+              "verdict": "FAIL",
+              "health_status": "VALID",
+              "trajectory_valid": true,
+              "trajectory_path": "/Users/shaw/eval-plant/data/jobs/terminal-bench-acceptance-20260827-112032-109040-dsh-flash/kv-store-grpc__P85TKEJ/agent/trajectory.json",
+              "source_schema_version": "ATIF-v1.7",
+              "canonical_schema_version": "evalplant-canonical-v1",
+              "adapter_version": "atif-adapter-v1",
+              "result_path": "/Users/shaw/eval-plant/data/jobs/terminal-bench-acceptance-20260827-112032-109040-dsh-flash/kv-store-grpc__P85TKEJ/result.json",
+              "verifier_present": true,
+              "exception_type": "",
+              "exception_message": "",
+              "missing_tool_results": [],
+              "context_truncation_markers": [],
+              "signals": {
+                "step_count": 10,
+                "tool_errors": [],
+                "duplicate_calls": [],
+                "file_edit_steps": [
+                  4,
+                  5,
+                  6
+                ],
+                "test_runs": [],
+                "verification_missing": true,
+                "terminal_steps": [],
+                "terminal_statuses": [],
+                "timeout_steps": []
+              }
+            },
+            "estimated_input_tokens": 13929,
+            "max_input_tokens": 100000,
+            "structured_failure_facts": {
+              "step_count": 10,
+              "last_pre_anomaly_step": null,
+              "first_anomaly_step": null,
+              "tool_error_steps": [],
+              "failed_test_steps": [],
+              "file_edit_steps": [
+                4,
+                5,
+                6
+              ],
+              "missing_tool_results": [],
+              "context_truncated": false,
+              "verifier_status": "FAIL",
+              "termination_reason": "recorded_end",
+              "agent_verifier_conflict": false
+            }
+          }
+        }
+      ]
+    }
+  },
+  "failure_clusters": {
+    "L4": 1
+  },
+  "contract_violations": {
+    "premature_termination": 1
+  },
+  "recommendations": [
+    {
+      "category": "L4",
+      "label": "L4 Verification（反馈验证）",
+      "count": 1,
+      "action": "增加反馈处理、完成前验证和终止条件。"
+    }
+  ],
+  "reports": {
+    "json": "/Users/shaw/eval-plant/reports/acceptance/terminal-bench-acceptance-20260827-112032-109040.json",
+    "markdown": "/Users/shaw/eval-plant/reports/acceptance/terminal-bench-acceptance-20260827-112032-109040.md"
+  },
+  "generated_at": "2026-08-27T11:25:11.317041+00:00"
+}
