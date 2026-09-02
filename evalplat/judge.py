@@ -257,31 +257,74 @@ def match_harness_rule(facts: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     )
 
 
+def _judge_base_url() -> str:
+    return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+
+def _is_ollama_judge() -> bool:
+    url = _judge_base_url()
+    return os.getenv("EVALPLAT_JUDGE_PROVIDER") == "ollama" or "11434" in url
+
+
+def parse_judge_json(content: str) -> Dict[str, Any]:
+    text = (content or "").strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("Judge response is not a JSON object")
+        result = json.loads(text[start : end + 1])
+    if not isinstance(result, dict):
+        raise ValueError("Judge response must be a JSON object")
+    return result
+
+
 def _json_call(
     client: Any, model: str, system: str, payload: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     started = time.monotonic()
-    request = {
+    extra_body: Dict[str, Any] = {}
+    if _is_ollama_judge():
+        extra_body["think"] = THINKING_CONFIG == "enabled"
+        num_ctx = os.getenv("EVALPLAT_OLLAMA_NUM_CTX")
+        if num_ctx:
+            extra_body["num_ctx"] = int(num_ctx)
+            extra_body["options"] = {"num_ctx": int(num_ctx)}
+    else:
+        extra_body["thinking"] = {"type": THINKING_CONFIG}
+    request: Dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
-        "response_format": {"type": "json_object"},
         "max_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
-        "extra_body": {"thinking": {"type": THINKING_CONFIG}},
     }
-    if THINKING_CONFIG == "enabled":
-        request["reasoning_effort"] = REASONING_EFFORT
-    else:
-        request["temperature"] = TEMPERATURE
+    if extra_body:
+        request["extra_body"] = extra_body
+    if not _is_ollama_judge():
+        request["response_format"] = {"type": "json_object"}
+        if THINKING_CONFIG == "enabled":
+            request["reasoning_effort"] = REASONING_EFFORT
+        else:
+            request["temperature"] = TEMPERATURE
     response = client.chat.completions.create(**request)
-    content = response.choices[0].message.content
+    message = response.choices[0].message
+    content = message.content
+    if not content:
+        content = getattr(message, "reasoning", None) or getattr(
+            message, "reasoning_content", None
+        )
     if not content:
         raise ValueError("Judge returned an empty response")
-    result = json.loads(content)
-    if not isinstance(result, dict):
-        raise ValueError("Judge response must be a JSON object")
+    result = parse_judge_json(str(content))
     usage = getattr(response, "usage", None)
     return result, {
         "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
@@ -795,12 +838,16 @@ def analyze_trajectory(
     if client is None:
         api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY is required for LLM diagnosis")
+            if _is_ollama_judge():
+                api_key = "ollama"
+            else:
+                raise ValueError("DEEPSEEK_API_KEY is required for LLM diagnosis")
         from openai import OpenAI
 
         client = OpenAI(
             api_key=api_key,
-            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            base_url=_judge_base_url(),
+            timeout=float(os.getenv("EVALPLAT_JUDGE_TIMEOUT_SECONDS", "1800")),
         )
     raw_result, first_usage = _json_call(client, model, system, payload)
     usage = _combined_usage(first_usage)

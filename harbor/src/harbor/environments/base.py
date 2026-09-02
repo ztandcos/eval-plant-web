@@ -194,7 +194,14 @@ class BaseEnvironment(ABC):
         self._override_tpu = override_tpu
         self._cpu_resource_mode = ResourceMode(cpu_enforcement_policy)
         self._memory_resource_mode = ResourceMode(memory_enforcement_policy)
-        self._persistent_env: dict[str, str] = persistent_env or {}
+        # Job/trial ``environment.env`` is persisted as ``${VAR}`` templates so
+        # secrets stay off disk. Expand them from the host here — Docker
+        # ``compose exec -e KEY=${VAR}`` does not interpolate, and a leftover
+        # template (e.g. ``ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}``)
+        # is sent into the container as a literal string.
+        self._persistent_env: dict[str, str] = (
+            resolve_env_vars(persistent_env) if persistent_env else {}
+        )
         self._mounts: list[ServiceVolumeConfig] = list(mounts) if mounts else []
         self._network_policy = network_policy or NetworkPolicy()
         self._phase_network_policies: list[NetworkPolicy] = list(
@@ -429,7 +436,9 @@ class BaseEnvironment(ABC):
             merged.update(env)
         for scoped_env in overlays:
             merged.update(scoped_env)
-        return merged or None
+        if not merged:
+            return None
+        return resolve_env_vars(merged)
 
     @contextlib.contextmanager
     def scoped_exec_env(self, env: dict[str, str]) -> Generator[None, None, None]:

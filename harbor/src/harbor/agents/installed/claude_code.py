@@ -5,6 +5,7 @@ import re
 import shlex
 import shutil
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, override
@@ -18,6 +19,7 @@ from harbor.agents.installed.base import (
 from harbor.agents.model_connection import (
     ResolvedModelConnection,
     ModelConnectionSpec,
+    resolve_model_connection,
     without_inferred_endpoint,
 )
 from harbor.agents.protocols import ACPAgentMixin
@@ -61,6 +63,16 @@ class ClaudeCode(BaseInstalledAgent, ACPAgentMixin):
     @override
     def model_connection(self) -> ResolvedModelConnection:
         # Bedrock / bearer-token routing has no Anthropic API endpoint to infer.
+        if self.model_name and self.model_name.lower().startswith("deepseek/"):
+            access = resolve_model_connection(
+                self.model_name, ModelConnectionSpec(), self._resolve_env
+            )
+            endpoint = (
+                self._get_env("ANTHROPIC_BASE_URL")
+                or self._get_env("DEEPSEEK_ANTHROPIC_BASE_URL")
+                or "https://api.deepseek.com/anthropic"
+            )
+            return replace(access, base_url=endpoint, configured_base_url=endpoint)
         access = super().model_connection
         if self._get_env("AWS_BEARER_TOKEN_BEDROCK"):
             return without_inferred_endpoint(access)
@@ -534,8 +546,8 @@ class ClaudeCode(BaseInstalledAgent, ACPAgentMixin):
                 + '_hb_claude="$HOME/.local/bin/claude"; fi; '
                 + ensure_acp_node_command()
                 + " && "
-                "npm install -g "
-                f"@zed-industries/claude-code-acp@{self.CLAUDE_CODE_ACP_VERSION} && "
+                "(command -v claude-code-acp >/dev/null || npm install -g "
+                f"@zed-industries/claude-code-acp@{self.CLAUDE_CODE_ACP_VERSION}) && "
                 'echo "${_hb_system_node:-none}:$(command -v node)'
                 ":$(command -v claude-code-acp)"
                 ':${_hb_claude:-none}"'
@@ -1688,6 +1700,8 @@ class ClaudeCode(BaseInstalledAgent, ACPAgentMixin):
         ACP launch command."""
         if self.model_name:
             access = self.model_connection
+            if access.provider == "deepseek":
+                return self.model_name.split("/", 1)[-1]
             if access.provider is None:
                 if "/" in self.model_name:
                     return self.model_name.split("/", 1)[-1]
@@ -1751,6 +1765,12 @@ class ClaudeCode(BaseInstalledAgent, ACPAgentMixin):
             "ANTHROPIC_BASE_URL": (None if use_bedrock else access.configured_base_url),
             "CLAUDE_CODE_OAUTH_TOKEN": oauth_token,
         }
+        # Compatible Anthropic gateways (DeepSeek, MiniMax, ...) read
+        # ANTHROPIC_AUTH_TOKEN. Mirror the resolved key so a leftover
+        # ``${ANTHROPIC_AUTH_TOKEN}`` template in persistent env cannot
+        # override a valid ANTHROPIC_API_KEY inside the CLI.
+        if api_key:
+            env["ANTHROPIC_AUTH_TOKEN"] = api_key
 
         # Bedrock configuration: pass through AWS credentials and region
         if use_bedrock:

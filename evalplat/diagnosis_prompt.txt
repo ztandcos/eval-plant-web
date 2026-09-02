@@ -6,13 +6,13 @@
 
 Harness 主要层只能选择 H-E 执行环境、H-T 工具链路、H-C 上下文管理、H-L 运行生命周期、H-O 可观测性、H-V 验证与判分、H-G 治理与限制之一。LLM 主要类别只能选择 L1 目标理解与规划、L2 推理与决策、L3 行动与工具使用、L4 反馈验证与结束之一。
 
-根因采用 first sufficient cause：寻找时间上最早、足以导致最终失败、修复后大概率可以阻断失败链的可行动事件。后续报错通常是 FAILURE_SURFACE，报错后的动作通常是修复尝试。不要把最后一句“已经完成”自动当成根因。两个独立原因都足以失败且无法排序时返回 UNDETERMINED。
+根因采用 first sufficient cause：先按时间从早到晚找出第一个错误的决策或动作，再判断修复它是否大概率能阻断失败链；不要直接从最后的报错、失败测试或 Verifier 结果倒推根因。后续报错、失败测试和 Verifier 判定通常只能作为 FAILURE_SURFACE 或证据，不能作为 primary_cause；报错后的动作通常是修复尝试。LLM 的 primary_cause 应指向造成错误决策或动作的 agent 步骤；若错误计划、委派或任务理解已经决定了后续错误，选该计划步骤并标为 L1，只有不存在更早错误计划时才把独立的错误工具调用标为 L3。不要把最后一句“已经完成”自动当成根因。两个独立原因都足以失败且无法排序时返回 UNDETERMINED。
 
-因果事件 role 只能是 TRIGGER、PROPAGATION、SECONDARY 或 FAILURE_SURFACE。对每个候选检查支持证据和反证，并用 counterfactual 说明修复主要根因后为什么可能避免失败。所有 quote 必须逐字来自输入中的原始步骤、Verifier 日志或 runtime_facts；结构索引和推断性摘要不能作为最终 quote。
+因果事件 role 只能是 TRIGGER、PROPAGATION、SECONDARY 或 FAILURE_SURFACE。primary_cause 的 step_id 必须等于 causal_chain 中最早的 TRIGGER 步骤；若不是，重新选择更早的根因或返回 UNDETERMINED。对每个候选检查支持证据和反证，并用 counterfactual 说明修复主要根因后为什么可能避免失败。所有 quote 必须从输入原文复制一段连续、简短的字符串，逐字来自指定 step_id 的原始步骤，或来自 Verifier 日志/runtime_facts；不要改写、翻译、拼接或引用结构索引和推断性摘要。relation 只能是 "DIRECT_SUPPORT" 或 "CONTEXT_SUPPORT"，不要使用其他拼写。输出前核对每个 evidence.step_id 存在且 quote 能在该步骤原文中找到。
 
 如果 HIERARCHICAL 视图缺少决定责任所需的原文，第一次可以返回 NEED_MORE_EVIDENCE，并提供最多 100 个 requested_step_ids 或 requested_ranges。补充后仍不足必须返回 UNDETERMINED。发现可能是新型 Harness 故障但现有事实不足以确认时返回 HARNESS_SUSPECTED，不要误判为 LLM。
 
-ATTRIBUTED 只返回 JSON：
+ATTRIBUTED 只返回一个 JSON 对象，不要 Markdown、代码块或额外说明：
 {
   "status": "ATTRIBUTED",
   "summary": "模型向工具传入不合法参数，工具拒绝执行后任务失败。",

@@ -95,6 +95,19 @@ class HarborAdapterTest(unittest.TestCase):
                 [item["n_concurrent"] for item in config["agents"]], [2, 2]
             )
 
+    def test_job_config_does_not_inject_ambient_secrets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "host-key"}):
+                config = build_job_config(
+                    agents=["codex"],
+                    benches=["terminal-bench"],
+                    job_name="private",
+                    jobs_dir=Path(temp),
+                    model="deepseek/deepseek-v4-flash",
+                )
+        self.assertEqual(config["environment"]["env"], {})
+        self.assertNotIn("host-key", json.dumps(config))
+
     def test_unknown_sandbox_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):

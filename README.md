@@ -13,14 +13,25 @@ YAML → evalplat eval → 一个 Harbor Job
 
 ## 配置
 
-`suites/terminalbench-two-agent-demo.yaml` 是正式双 Agent 配置：`dsh` 使用 `DEEPSEEK_API_KEY`，`codex` 使用 `OPENAI_API_KEY`。密钥只来自环境变量，不写入 YAML，不提交 Git。
+导出 provider 的标准密钥后，直接执行命令即可。EvalPlat 按模型前缀和 agent 自动完成鉴权与协议适配；密钥只进入运行它的 agent，不写入 YAML、Job 配置或任务容器。
 
 ```bash
 export DEEPSEEK_API_KEY='你的 DeepSeek Key'
-export OPENAI_API_KEY='你的 OpenAI Key'
+uv run evalplat bench \
+  --agent codex --agent claude-code \
+  --agent-model deepseek/deepseek-v4-flash \
+  --bench evals --task fix-off-by-one --concurrency 2
 ```
 
-YAML 只支持 `agents`（至少一个）。每个 Agent 可写 `name / agent / model / n_concurrent / agent_kwargs`。可选嵌套 `diagnosis` 和 `recovery`。可选 `comparison`；没有它时就是绝对评测，不生成回归标签。
+上面的命令会在一个 Harbor Job 中并发执行 Codex 和 Claude Code。单 agent 只保留一个 `--agent codex`；任意本地 bench 或 Harbor dataset 都可替换 `--bench`，需要限制题目时加 `--task`。目前 DeepSeek 的 Codex Responses API 与 Claude Code Anthropic API 会自动适配；其他 provider 则导出它们惯用的标准密钥，例如 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。
+
+YAML 只支持 `agents`（至少一个）。每个 Agent 可写 `name / agent / model / n_concurrent / agent_kwargs / agent_env`。`agent_env` 仅用于特殊网关或非标准环境变量；正常 provider 不需要写。可选嵌套 `diagnosis` 和 `recovery`。可选 `comparison`；没有它时就是绝对评测，不生成回归标签。
+
+本机的 Codex/Claude Code 稳定配置是 [suites/deepseek-codex-claude-parallel.yaml](suites/deepseek-codex-claude-parallel.yaml)。它会先构建并缓存一次共享 Agent 镜像；镜像构建、镜像内 apt/npm 安装和 Harbor 基础设施错误都有重试。直接用一条命令运行，密钥只留在当前进程环境里：
+
+```bash
+DEEPSEEK_API_KEY='你的 DeepSeek Key' uv run evalplat eval suites/deepseek-codex-claude-parallel.yaml --output-dir reports/deepseek-codex-claude
+```
 
 ## 命令
 

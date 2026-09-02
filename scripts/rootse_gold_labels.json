@@ -1,0 +1,512 @@
+{
+  "auto-code-rover|gpt-4-0125|instance_astropy__astropy-14182": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: missed inherited RST/FixedWidth header_rows and reinvented it. Wrong diagnosis of missing capability, not a harness break."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-10914": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: localized to FileSystemStorage defaults instead of temp-file permission preservation on move."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-13551": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: analysis found get_email_field_name but the write_patch hardcoded getattr(user, 'email'). Action did not implement the reasoned constraint."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-14534": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: treated empty id as a bug instead of a legitimate auto_id=False state already in the parent field."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-14787": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: attribute loss happens in _multi_decorate at partial creation, not later in update_wrapper."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-14999": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: thought pinned reduce() as the bug while the response still needed backend/SchemaEditor exploration."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-15252": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: treated the issue's informal snippet as the allow_migrate signature instead of the real codebase API."
+  },
+  "auto-code-rover|gpt-4-0125|instance_django__django-15695": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: vague 'check new_name' plan instead of using the in-memory old_index for an idempotent skip."
+  },
+  "auto-code-rover|gpt-4-0125|instance_sympy__sympy-12419": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: selective attention over retrieved functions; committed to one hypothesis without reviewing the rest."
+  },
+  "auto-code-rover|gpt-4-0125|instance_sympy__sympy-22714": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: retrieved Point.__new__ but ignored the conditional that actually raises ValueError."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|12rambau__sepal_ui-646": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: misread *100 as a fractional mode rather than a workaround for total=100."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|15five__scim2-filter-parser-13": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: implemented AttrPathTuple while tests require AttrPath. Wrong symbol in the edit."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|ARMmbed__mbed-tools-138": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: generated illegal CMake -D quoting so spaces split a single preprocessor definition."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|ARMmbed__mbed-tools-91": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: treated a trailing-slash URL bug as environmental/error-string formatting."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|AzureAD__microsoft-authentication-library-for-python-530": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: read an Azure B2C example as a platform-specific requirement instead of a general scope-filter flaw."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Azure__azure-cli-1876": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: split BOM handling into JSON vs non-JSON paths; the issue is universal string loading."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|BAMWelDX__weldx-384": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: concluded serialization was correct while coordinate-to-Variable conversion dropped attrs."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Bachmann1234__diff_cover-413": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: continue on UnicodeDecodeError omitted binary files from the change list instead of recording empty hunks."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|BoboTiG__ebook-reader-dict-2101": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: built a reproduction test with rank-before-name order, contradicting existing taxlink-style templates."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|BoboTiG__ebook-reader-dict-2133": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: assumed new templates matched existing ones and ignored the actual task requirements."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|BoboTiG__ebook-reader-dict-2145": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: treated a legacy failing test as absolute truth instead of accepting it as obsolete under the new spec."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|BoboTiG__ebook-reader-dict-2149": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: ignored the provided Wiktionary module and planned full words (masculine) instead of abbreviations (m)."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|CODAIT__exchange-metadata-converter-25": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: exploratory YAML prototype only covered dicts, so list-nested placeholders were never handled."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|CODAIT__exchange-metadata-converter-38": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: abandoned the correct id-mapping fix to satisfy name-matching tests that contradict the task."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|CORE-GATECH-GROUP__serpent-tools-377": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: generalized grid identifiers from one file to E/X/Y/Z only."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|CS-SI__eodag-634": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: decided single-file trees need no flattening, breaking the function's stated contract."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|David-Wobrock__sqlvalidator-43": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: treated CASE/END nesting as unlike parentheses and forked a redundant parser instead of unifying counts."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Delgan__loguru-1236": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: even backslash runs were treated as escaping the color tag instead of literal backslashes that release it."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Delgan__loguru-1299": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: read NO_COLOR as a global override; the spec only covers default output, not explicit API color."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Dorthu__openapi3-57": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: tests only covered the parse crash and never exercised the later API-execution path the issue described."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Duke-GCB__lando-169": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: picked Paths.OUTPUT_RESULTS_DIR for metadata; that path is for workflow results."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Duke-GCB__lando-173": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: took the user's 'tee' metaphor as a mandatory bash -c wrapper instead of dual-stream logging."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|ESSS__conda-devenv-51": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: saw the fix already present and still failing, then rolled back instead of re-localizing."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|ESSS__oop-ext-21": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: narrowed a valid general mock fix to pass an obsolete autospec test instead of updating the test."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Erotemic__ubelt-64": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: treated an optional second verbosity level as the primary requirement."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Fatal1ty__mashumaro-116": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: unpack.py already had Annotated support, so it skipped pack.py, which was the actual gap."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|Fatal1ty__mashumaro-130": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: applied a Draft 2020-12 $defs pointer change to OpenAPI's still-valid components/schemas path."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|FirefighterBlu3__python-pam-32": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: wrapped pam.authenticate instead of changing PamAuthenticator.authenticate's return type."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|GjjvdBurg__paper2remarkable-43": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: committed to a platform-aware redesign from the issue text before inspecting the code; a small exception wrapper was enough."
+  },
+  "openhands|qwen3-coder-480B-A35B-instruct|ansible__ansible-builder-336": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: planned to delete yamllint/ansible-lint from EXCLUDE_REQUIREMENTS instead of distinguishing user-required packages."
+  },
+  "swe-agent|claude45|instance_NodeBB__NodeBB-70b4a0e2aebebe8f2f559de6680093d96a697b2f-vnan": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: str_replace_editor died on bash syntax near '('. Malformed tool invocation, not a missing observation."
+  },
+  "swe-agent|claude45|instance_NodeBB__NodeBB-84dfda59e6a0e8a77240f939a7cb8757e6eaf945-v2c59007b1005cd5cd14cbb523ca5229db1fd2dd8": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: deleteFromDisk threw [[error:invalid-data]] instead of the required wrong-parameter-type message."
+  },
+  "swe-agent|claude45|instance_NodeBB__NodeBB-f1a80d48cc45877fcbadf34c2345dd9709722c7f-v4fbcfae8b15e4ce5d132c408bca69ebb9cf146ed": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: another str_replace bash syntax failure on spawnPrivilegeStates; first sufficient cause is the illegal call."
+  },
+  "swe-agent|claude45|instance_NodeBB__NodeBB-f48ed3658aab7be0f1165d4c1f89af48d7865189-v0495b863a912fbff5749c67e860612b91825407c": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: wrapped the chat edit result in {message:...} so tests could not see content at the root."
+  },
+  "swe-agent|claude45|instance_ansible__ansible-6cc97447aac5816745278f3735af128afb255c81-v0f01c69f1e2528b935359cfe578530722bca2c59": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: invented encoding/errors defaults for bytes instead of calling str(obj) when those params are omitted."
+  },
+  "swe-agent|claude45|instance_ansible__ansible-77658704217d5f166404fc67997203c25381cb6e-v390e508d27db7a51eece36bb6d9698b63a5b638a": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: used commands[-1] to detect address-family after later commands had been appended."
+  },
+  "swe-agent|claude45|instance_ansible__ansible-f86c58e2d235d8b96029d102c71ee2dfafd57997-v0f01c69f1e2528b935359cfe578530722bca2c59": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: discarded original CLIXML when parse results were empty instead of returning the raw bytes."
+  },
+  "swe-agent|claude45|instance_future-architect__vuls-e4728e388120b311c4ed469e4f942e0347a2689b-v264a82e2f4818e30f5a25e4da53b27ba119f62b5": {
+    "responsibility": "HARNESS",
+    "category_code": "H-O",
+    "notes": "Human gold: a legitimate edit via Python produced infinitely repeating observation text, so the step could not complete. Contract: result injection/logging broke, not an illegal tool choice."
+  },
+  "swe-agent|claude45|instance_future-architect__vuls-f6509a537660ea2bce0e57958db762edd3a36702": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: mission requires env var userprofile; the agent wrote a test and implementation against USERPROFILE."
+  },
+  "swe-agent|claude45|instance_future-architect__vuls-fe8d252c51114e922e6836055ef86a15f79ad042": {
+    "responsibility": "HARNESS",
+    "category_code": "H-T",
+    "notes": "Human gold: str_replace hit an unknown-command environment error and returned a wall of directory listings instead of the edit result."
+  },
+  "swe-agent|claude45|instance_gravitational__teleport-007235446f85b1cbaef92664c3b3867517250f21": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: assumed makePath keeps the root for an absolute filename; it actually drops the root."
+  },
+  "swe-agent|claude45|instance_gravitational__teleport-46aa81b1ce96ebb4ebed2ae53fd78cd44a05da6c-vee9b09fb20c43af7e520f57e9239bbcf46b7113d": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: truncation rendered content[*] instead of the required content... [*]."
+  },
+  "swe-agent|claude45|instance_gravitational__teleport-59d39dee5a8a66e5b8a18a9085a199d369b1fba8-v626ec2a48416b10a88641359a169d99e935ff037": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: deleted aws.go CA download without migrating RDS/Redshift cache writes into getCACert."
+  },
+  "swe-agent|claude45|instance_gravitational__teleport-89f0432ad5dc70f1f6a30ec3a8363d548371a718": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: self-test treated bytes-read == limit as success; the spec requires ErrLimitReached on equality."
+  },
+  "swe-agent|claude45|instance_internetarchive__openlibrary-2fe532a33635aab7a9bfea5d977f6a72b280a30c-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: always inserted the languages key, including when the value was empty."
+  },
+  "swe-agent|claude45|instance_internetarchive__openlibrary-3f7db6bbbcc7c418b3db72d157c6aed1d45b2ccf-v430f20c722405e462d9ef44dee7d34c41e76fe7a": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: NONBOOK listed specific audio variants instead of general types such as 'audio'."
+  },
+  "swe-agent|claude45|instance_internetarchive__openlibrary-4b7ea2977be2747496ba792a678940baa985f7ea-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: import_author swallowed merge_remote_ids conflicts in try/except so required errors never propagated."
+  },
+  "swe-agent|claude45|instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: self-test and code used language instead of dcterms_language."
+  },
+  "swe-agent|claude45|instance_internetarchive__openlibrary-e1e502986a3b003899a8347ac8a7ff7b08cbfc39-v08d8e8889ec945ab821fb156c04c7d2e2810debb": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: extra space when TocEntry label is null produced two spaces before |."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-0130c6dc13438b48cf0fdfab08a89e357b5517c9": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: dirStat field named ImageFiles while tests look up Images."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-0488fb92cb02a82924fb1181bf1642f2e87096db": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: originalSize <= size early-return skipped square processing for small non-square images."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-23bebe4e06124becf1000e88472ae71a6ca7de4c": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: public router group still used checkRequiredParameters, which demands a username."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-56303cde23a4122d2447cbb266f942601a78d7e4": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: R128→ReplayGain used a -5 dB offset; the required transfer is +5 dB."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-89b12b34bea5687c70e4de2109fd1e7330bb2ba2": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: error string was 'last.fm http status: 500' instead of '(500)'."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-9c3b4561652a15846993d477003e111f0df0c585": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: plan mixed OS detection into CRLFWriter instead of keeping conversion vs SetOutput policy separate."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-dfa453cc4ab772928686838dc73d0130740f054e": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: InPlaylist SQL was valid but did not match the test's required alias/parenthesis string."
+  },
+  "swe-agent|claude45|instance_navidrome__navidrome-e12a14a87d392ac70ee4cc8079e3c3e0103dbcb2": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: channel words were converted in Channels() instead of stored as ints in the metadata map."
+  },
+  "swe-agent|claude45|instance_qutebrowser__qutebrowser-305e7c96d5e2fdb3b248b27dfb21042fb2b7e0b8-v2ef375ac784985212b1805e1d0431dc8f1b3c171": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: passing None as a ListCategory field let QStandardItem coerce it to ''."
+  },
+  "swe-agent|claude45|instance_qutebrowser__qutebrowser-6dd402c0d0f7665d32a74c43c5b4cf5dc8aff28d-v5fc38aaf22415ab0b70567368332beee7955b367": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: planned to re-raise DeserializationError; the mission is to swallow cache errors so the app does not crash."
+  },
+  "swe-agent|claude45|instance_qutebrowser__qutebrowser-e15d26630934d0b6415ed2295ac42fd570a57620-va0fd88aac89cde702ec1ba84877234da33adce8a": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: is not None before encode() still lets non-str values through and raise AttributeError."
+  },
+  "swe-agent|gemini2|instance_NodeBB__NodeBB-82562bec444940608052f3e4149e0c61ec80bf3f-vd59a5728dfc977f44533186ace531248c2917516": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: grep -r without non-interactive flags opened 'Display all N possibilities?' and trapped the shell."
+  },
+  "swe-agent|gemini2|instance_ansible__ansible-5e369604e1930b1a2e071fecd7ec5276ebd12cb1-v0f01c69f1e2528b935359cfe578530722bca2c59": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: used lock.acquire/release so tests asserting __enter__ failed; need with self._lock."
+  },
+  "swe-agent|gemini2|instance_future-architect__vuls-407407d306e9431d6aa0ab566baa6e44e5ba2904": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: used a map overwrite for same-source CVSS rows that should be appended when vectors/scores differ."
+  },
+  "swe-agent|gemini2|instance_future-architect__vuls-4b680b996061044e93ef5977a081661665d3360a": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: FreeBSD check sat after Fast-mode default true, so FreeBSD+Fast never hit it."
+  },
+  "swe-agent|gemini2|instance_future-architect__vuls-be7b9114cc9545e68fb0ee7bc63d7ec53d1a00ad": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: called .String() on Identifier.PURL without a nil check."
+  },
+  "swe-agent|gemini2|instance_internetarchive__openlibrary-1894cb48d6e7fb498295a5d3ed0596f6f603b784-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: viewed the wrong line range and edited compare_authors instead of editions_match."
+  },
+  "swe-agent|gemini2|instance_internetarchive__openlibrary-5069b09e5f64428dce59b33455c8bb17fe577070-v8717e18970bcdc4e0d2cea3b1527752b21e74866": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: applied Booknotes no-delete-on-conflict to every table; only Booknotes must preserve rows."
+  },
+  "swe-agent|gemini2|instance_navidrome__navidrome-09ae41a2da66264c60ef307882362d2e2d8d8b89": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: reproduction script always got an error response, so later failed edits were counted as success."
+  },
+  "swe-agent|gemini2|instance_navidrome__navidrome-97434c1789a6444b30aae5ff5aa124a96a88f504": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: switched to FindMatch but deleted the ID lookup fallback required by Register."
+  },
+  "swe-agent|gemini2|instance_navidrome__navidrome-9c3b4561652a15846993d477003e111f0df0c585": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: CRLFWriter ignored a leading LF that completes \\r\\n across writes."
+  },
+  "swe-agent|gemini2|instance_qutebrowser__qutebrowser-0b621cb0ce2b54d3f93d8d41d8ff4257888a87e5-v2ef375ac784985212b1805e1d0431dc8f1b3c171": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: hint string gained an extra trailing period versus the exact test format."
+  },
+  "swe-agent|gemini2|instance_qutebrowser__qutebrowser-6dd402c0d0f7665d32a74c43c5b4cf5dc8aff28d-v5fc38aaf22415ab0b70567368332beee7955b367": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: planned to catch then re-raise; the requirement is no exception leaving read_cache."
+  },
+  "swe-agent|gpt5|instance_ansible__ansible-83fb24b923064d3576d473747ebbe62e4535c9e3-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: iptables multiport flags were emitted in the wrong order relative to -j and -i."
+  },
+  "swe-agent|gpt5|instance_ansible__ansible-b5e0293645570f3f404ad1dbbe5f006956ada0df-v0f01c69f1e2528b935359cfe578530722bca2c59": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: combined[:-2] stripped a legitimate trailing CRLF that belonged to decoded content."
+  },
+  "swe-agent|gpt5|instance_ansible__ansible-b748edea457a4576847a10275678127895d2f02f-v1055803c3a812189a1133297f7f5468579283f86": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: multipart headers were Content-Disposition then Content-Type; tests require the reverse."
+  },
+  "swe-agent|gpt5|instance_future-architect__vuls-7e91f5ef7e5712b1a3d7d5066ad6607e9debc21c": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: str_replace_editor arguments with // comments were parsed as extra argv and left the shell corrupted."
+  },
+  "swe-agent|gpt5|instance_internetarchive__openlibrary-0a90f9f0256e4f933523e9842799e39f95ae29ce-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: after stripping 'Place of publication not identified', empty strings were still returned in locations."
+  },
+  "swe-agent|gpt5|instance_internetarchive__openlibrary-431442c92887a3aece3f8aa771dd029738a80eb1-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c": {
+    "responsibility": "LLM",
+    "category_code": "L1",
+    "notes": "Human gold: self-test required preserving luqum head/tail, which the mission does not specify."
+  },
+  "swe-agent|gpt5|instance_internetarchive__openlibrary-e1e502986a3b003899a8347ac8a7ff7b08cbfc39-v08d8e8889ec945ab821fb156c04c7d2e2810debb": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: always appended a space after the label segment, yielding '*  |' when label is empty."
+  },
+  "swe-agent|gpt5|instance_internetarchive__openlibrary-e8084193a895d8ee81200f49093389a3887479ce-ve8c8d62a2b60610a3c4631f5f23ed866bada9818": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: normalization missed the '[s.n.' variant left after strip of trailing punctuation."
+  },
+  "swe-agent|gpt5|instance_navidrome__navidrome-6c6223f2f9db2c8c253e0d40a192e3519c9037d1": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: MaxBitRate applied only when smaller than DefaultBitRate; player config must always override."
+  },
+  "swe-agent|gpt5|instance_navidrome__navidrome-89b12b34bea5687c70e4de2109fd1e7330bb2ba2": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: HTTP parse failure used 'unexpected status code' instead of the last.fm error(N): pattern."
+  },
+  "swe-agent|gpt5|instance_qutebrowser__qutebrowser-77c3557995704a683cdb67e2a3055f7547fa22c3-v363c8a7e5ccdf6968fc7ab84a2053ac78036691d": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: followed the PR str() format and did not reconcile the failing test's different expected format."
+  },
+  "swe-agent-live|claude-sonnet-4-5|instance_django__django-15022": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: after test_multiple_search_fields failed, it did not notice the expected count changed 1→0 and reverted the correct single-filter."
+  },
+  "swe-agent-live|claude-sonnet-4-5|instance_django__django-15128": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: patched table_alias() instead of combine()-level alias namespace conflicts."
+  },
+  "swe-agent-live|claude-sonnet-4-5|instance_matplotlib__matplotlib-25775": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: expanded into _mathtext.py beyond Text/backend antialiasing, then reverted to an empty patch."
+  },
+  "swe-agent-live|claude-sonnet-4-5|instance_sympy__sympy-13031": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: Matrix repro passed, so it concluded fixed and never checked SparseMatrix."
+  },
+  "swe-agent-live|claude-sonnet-4-5|instance_sympy__sympy-13878": {
+    "responsibility": "LLM",
+    "category_code": "L3",
+    "notes": "Human gold: ArcsinDistribution._cdf used only the interior formula, missing Piecewise bounds."
+  },
+  "swe-agent-live|gpt5|instance_matplotlib__matplotlib-20826": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: dropped the _sharex is not None guard, so polar subplots hid tick labels during cla()/init."
+  },
+  "swe-agent-live|gpt5|instance_pytest-dev__pytest-5787": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: hasattr(..., 'chain') is always true for ExceptionChainRepr, so _from_json never hit unknown-type validation."
+  },
+  "swe-agent-live|gpt5mini|instance_django__django-15280": {
+    "responsibility": "LLM",
+    "category_code": "L2",
+    "notes": "Human gold: blamed shared _known_related_objects; the real overwrite is in get_prefetch_queryset."
+  },
+  "swe-agent-live|gpt5mini|instance_sphinx-doc__sphinx-10435": {
+    "responsibility": "LLM",
+    "category_code": "L4",
+    "notes": "Human gold: after a test failure, accepted the old no-% format as truth instead of updating the test per the PR."
+  }
+}

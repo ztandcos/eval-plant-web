@@ -47,7 +47,7 @@ class Codex(BaseInstalledAgent):
     SUPPORTS_RESUME: bool = True
     SUPPORTS_LOAD_NATIVE_TRAJECTORY: bool = True
     SUPPORTS_LOAD_ATIF_TRAJECTORY: bool = True
-    MODEL_CONNECTION = ModelConnectionSpec(default_provider="openai")
+    MODEL_CONNECTION = ModelConnectionSpec()
     SUPPORTS_CONFIG = True
     _OUTPUT_FILENAME = "codex.txt"
     _REMOTE_CODEX_HOME = PurePosixPath("/tmp/codex-home")
@@ -746,10 +746,12 @@ class Codex(BaseInstalledAgent):
             return None
 
         pricing_model_name: str | None = None
-        for key in (
-            resolved_model_name,
-            resolved_model_name.split("/", 1)[-1],
-        ):
+        pricing_candidates = [resolved_model_name]
+        if "/" not in resolved_model_name and self.model_name and "/" in self.model_name:
+            pricing_candidates.insert(
+                0, f"{self.model_name.split('/', 1)[0]}/{resolved_model_name}"
+            )
+        for key in pricing_candidates:
             if litellm.model_cost.get(key):
                 pricing_model_name = key
                 break
@@ -1240,12 +1242,25 @@ class Codex(BaseInstalledAgent):
         return config
 
     def _build_effective_config(
-        self, openai_base_url: str | None = None
+        self,
+        openai_base_url: str | None = None,
+        provider: str | None = None,
+        api_key: str | None = None,
     ) -> dict[str, Any]:
         """Merge Harbor runtime configuration on top of the user's base config."""
         config = deepcopy(self._base_config)
 
-        if openai_base_url:
+        if provider == "deepseek":
+            config["model_provider"] = "deepseek"
+            config["preferred_auth_method"] = "apikey"
+            config["forced_login_method"] = "api"
+            config.setdefault("model_providers", {})["deepseek"] = {
+                "name": "deepseek",
+                "base_url": openai_base_url or "https://api.deepseek.com/",
+                "wire_api": "responses",
+                "experimental_bearer_token": api_key or "",
+            }
+        elif openai_base_url:
             configured_base_url = config.get("openai_base_url")
             if configured_base_url not in (None, openai_base_url):
                 self.logger.warning(
@@ -1403,7 +1418,11 @@ class Codex(BaseInstalledAgent):
         # codex 0.118.0 only honors openai_base_url from config.toml, not the env var.
         # Codex reads durable settings from $CODEX_HOME/config.toml. Start with
         # the user's file, then apply explicit Harbor runtime inputs.
-        effective_config = self._build_effective_config(openai_base_url)
+        effective_config = self._build_effective_config(
+            access.base_url if access.provider == "deepseek" else openai_base_url,
+            access.provider,
+            access.api_key,
+        )
         await self._upload_effective_config(
             environment,
             effective_config,

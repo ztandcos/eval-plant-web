@@ -22,6 +22,10 @@ benchmarks:
 trials: 1
 concurrency: 2
 sandbox: docker
+bootstrap:
+  image: evalplat-agent-base:local
+  dockerfile: ../docker/agent-base.Dockerfile
+  context: ..
 env: [DEEPSEEK_API_KEY]
 metrics: [pass@1, cost, latency]
 

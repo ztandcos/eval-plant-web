@@ -80,14 +80,6 @@ INFRA_RETRY_EXCEPTIONS = (
     "RuntimeError",
 )
 
-KNOWN_SECRET_ENV = (
-    "DEEPSEEK_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "GOOGLE_API_KEY",
-)
-
-
 def resolve_agent(spec: str, model: Optional[str] = None) -> Dict[str, Any]:
     raw = spec.strip()
     if not raw:
@@ -117,9 +109,7 @@ def resolve_bench(spec: str, tasks: Optional[Sequence[str]] = None) -> Dict[str,
 
 
 def env_templates(extra: Optional[Iterable[str]] = None) -> Dict[str, str]:
-    names = list(KNOWN_SECRET_ENV)
-    if extra:
-        names.extend(item.strip() for item in extra if item and item.strip())
+    names = [item.strip() for item in extra or () if item and item.strip()]
     templates = {}
     for name in names:
         if name in os.environ and os.environ[name] != "":
@@ -142,6 +132,7 @@ def build_job_config(
     agent_kwargs: Optional[Mapping[str, Any]] = None,
     force_build: bool = False,
     max_infra_retries: int = 2,
+    agent_setup_timeout_multiplier: float = 1.0,
 ) -> Dict[str, Any]:
     if not agents:
         raise ValueError("At least one --agent is required")
@@ -153,6 +144,8 @@ def build_job_config(
         raise ValueError("--concurrency must be >= 1")
     if max_infra_retries < 0:
         raise ValueError("max_infra_retries must be >= 0")
+    if agent_setup_timeout_multiplier <= 0:
+        raise ValueError("agent_setup_timeout_multiplier must be > 0")
     kind = sandbox.strip().lower()
     if kind not in SANDBOXES:
         raise ValueError(
@@ -168,6 +161,14 @@ def build_job_config(
         elif isinstance(item, Mapping):
             agent = resolve_agent(str(item["agent"]), item.get("model"))
             kwargs = item.get("agent_kwargs")
+            agent_env = item.get("agent_env") or {}
+            if not isinstance(agent_env, Mapping) or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in agent_env.items()
+            ):
+                raise ValueError("agents.agent_env must be an object of strings")
+            if agent_env:
+                agent["env"] = dict(agent_env)
             if item.get("n_concurrent") is not None:
                 n_concurrent = int(item["n_concurrent"])
         else:
@@ -198,6 +199,7 @@ def build_job_config(
         },
         "agents": resolved_agents,
         "datasets": [resolve_bench(item, tasks) for item in benches],
+        "agent_setup_timeout_multiplier": agent_setup_timeout_multiplier,
     }
 
 

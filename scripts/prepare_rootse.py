@@ -7,6 +7,21 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+GOLD_LABELS_PATH = Path(__file__).with_name("rootse_gold_labels.json")
+CATEGORY_NAMES = {
+    "H-E": "执行环境",
+    "H-T": "工具链路",
+    "H-C": "上下文管理",
+    "H-L": "运行生命周期",
+    "H-O": "可观测性",
+    "H-V": "验证与判分",
+    "H-G": "治理与限制",
+    "L1": "目标理解与规划",
+    "L2": "推理与决策",
+    "L3": "行动与工具使用",
+    "L4": "反馈、验证与结束",
+}
+
 
 def text(value: Any) -> str:
     if value is None:
@@ -66,7 +81,40 @@ def case_id(data: Dict[str, Any]) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw)
 
 
-def convert(data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def gold_key(data: Dict[str, Any]) -> str:
+    return "%s|%s|%s" % (data["agent"], data["model"], data["instance_id"])
+
+
+def load_gold_labels() -> Dict[str, Dict[str, str]]:
+    payload = json.loads(GOLD_LABELS_PATH.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("RootSE gold labels must be a JSON object")
+    return payload
+
+
+def mapped_gold(data: Dict[str, Any], labels: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    key = gold_key(data)
+    mapped = labels.get(key)
+    if not mapped:
+        raise ValueError("Missing EvalPlat gold mapping for %s" % key)
+    responsibility = str(mapped["responsibility"])
+    category_code = str(mapped["category_code"])
+    expected = "HARNESS" if category_code.startswith("H-") else "LLM"
+    if responsibility != expected:
+        raise ValueError("Gold responsibility/category mismatch for %s" % key)
+    if category_code not in CATEGORY_NAMES:
+        raise ValueError("Unknown gold category %s for %s" % (category_code, key))
+    return {
+        "responsibility": responsibility,
+        "category_code": category_code,
+        "category_name": CATEGORY_NAMES[category_code],
+        "notes": str(mapped.get("notes") or ""),
+    }
+
+
+def convert(
+    data: Dict[str, Any], labels: Dict[str, Dict[str, str]]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     identifier = case_id(data)
     steps = [
         {
@@ -128,18 +176,19 @@ def convert(data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             "source_instance_id": data["instance_id"],
         },
     }
+    mapped = mapped_gold(data, labels)
     gold = {
         "case_id": identifier,
-        "responsibility": "LLM",
+        "responsibility": mapped["responsibility"],
+        "category_code": mapped["category_code"],
+        "category_name": mapped["category_name"],
         "root_cause_step": failure_id * 2 + 2,
         "source_root_cause_step": failure_id,
         "failure_reason": text(data["failure_reason"]),
-        "label_source": "RootSE human annotation",
-        "responsibility_basis": (
-            "RootSE labels an agent-generated trajectory step; the dataset does "
-            "not provide an EvalPlant L1-L4 category."
-        ),
-        "annotator": "RootSE human experts",
+        "label_source": "RootSE human annotation mapped to EvalPlat taxonomy",
+        "responsibility_basis": mapped["notes"],
+        "notes": mapped["notes"],
+        "annotator": "RootSE human experts; taxonomy mapped by evalplat",
     }
     return trajectory, gold
 
@@ -150,16 +199,27 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=102)
     args = parser.parse_args()
-    sources = sorted(args.source.rglob("*.json"))[: args.limit]
+    labels = load_gold_labels()
+    sources = sorted(
+        path
+        for path in args.source.rglob("*.json")
+        if path.name != "rootse_gold_labels.json"
+    )[: args.limit]
     if len(sources) < args.limit:
         raise ValueError("Requested %s cases but found %s" % (args.limit, len(sources)))
+    seen_keys = set()
     args.output.mkdir(parents=True, exist_ok=True)
     gold_rows = []
     step_count = 0
+    category_counts: Dict[str, int] = {}
     for source_path in sources:
         raw = source_path.read_bytes()
         source = json.loads(raw)
-        trajectory, gold = convert(source)
+        seen_keys.add(gold_key(source))
+        trajectory, gold = convert(source, labels)
+        category_counts[gold["category_code"]] = (
+            category_counts.get(gold["category_code"], 0) + 1
+        )
         target = args.output / "cases" / gold["case_id"]
         (target / "agent").mkdir(parents=True, exist_ok=True)
         (target / "verifier").mkdir(exist_ok=True)
@@ -213,13 +273,25 @@ def main() -> int:
         )
         gold_rows.append(gold)
         step_count += len(trajectory["steps"])
+    extra = sorted(seen_keys - set(labels))
+    if extra:
+        raise ValueError("Gold mapping missing keys: %s" % extra[:5])
+    if args.limit >= len(labels):
+        missing = sorted(set(labels) - seen_keys)
+        if missing:
+            raise ValueError("Unused gold labels because source cases missing: %s" % missing[:5])
     (args.output / "gold.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in gold_rows),
         encoding="utf-8",
     )
     print(
         json.dumps(
-            {"cases": len(gold_rows), "atif_steps": step_count, "gold": "gold.jsonl"},
+            {
+                "cases": len(gold_rows),
+                "atif_steps": step_count,
+                "gold": "gold.jsonl",
+                "gold_categories": category_counts,
+            },
             ensure_ascii=False,
         )
     )

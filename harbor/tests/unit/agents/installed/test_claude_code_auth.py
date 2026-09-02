@@ -86,6 +86,22 @@ class TestClaudeCodeRunAuth:
 
         envs = _exec_envs(mock_env)
         assert any(e.get("ANTHROPIC_API_KEY") == "sk-ant-default" for e in envs)
+        assert any(e.get("ANTHROPIC_AUTH_TOKEN") == "sk-ant-default" for e in envs)
+
+    @pytest.mark.asyncio
+    async def test_auth_token_alias_feeds_api_key_and_token(
+        self, monkeypatch, temp_dir
+    ):
+        _clear_auth_env(monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "gateway-token")
+        agent = ClaudeCode(logs_dir=temp_dir, model_name=_MODEL)
+        mock_env = _mock_env()
+
+        await agent.run("do something", mock_env, AsyncMock())
+
+        envs = _exec_envs(mock_env)
+        assert any(e.get("ANTHROPIC_API_KEY") == "gateway-token" for e in envs)
+        assert any(e.get("ANTHROPIC_AUTH_TOKEN") == "gateway-token" for e in envs)
 
     @pytest.mark.asyncio
     async def test_force_oauth_drops_api_key_keeps_token(self, monkeypatch, temp_dir):
@@ -100,6 +116,7 @@ class TestClaudeCodeRunAuth:
 
         envs = _exec_envs(mock_env)
         assert all("ANTHROPIC_API_KEY" not in e for e in envs)
+        assert all("ANTHROPIC_AUTH_TOKEN" not in e for e in envs)
         assert any(e.get("CLAUDE_CODE_OAUTH_TOKEN") == "oauth-tok" for e in envs)
 
     @pytest.mark.asyncio
@@ -162,6 +179,7 @@ class TestClaudeCodeAcpEnv:
         agent = ClaudeCode(logs_dir=temp_dir, model_name=_MODEL)
 
         assert agent.acp_env()["ANTHROPIC_API_KEY"] == "sk-ant-default"
+        assert agent.acp_env()["ANTHROPIC_AUTH_TOKEN"] == "sk-ant-default"
 
     def test_returns_api_key_from_extra_env(self, monkeypatch, temp_dir):
         _clear_auth_env(monkeypatch)
@@ -182,6 +200,7 @@ class TestClaudeCodeAcpEnv:
 
         env = agent.acp_env()
         assert "ANTHROPIC_API_KEY" not in env
+        assert "ANTHROPIC_AUTH_TOKEN" not in env
         assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-tok"
 
     def test_force_oauth_without_token_raises(self, monkeypatch, temp_dir):

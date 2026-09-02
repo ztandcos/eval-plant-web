@@ -105,6 +105,20 @@ def test_harbor_reasoning_default_applies_when_user_omits_it(
     assert "-c model_reasoning_effort=high" in agent.build_cli_flags()
 
 
+def test_codex_pricing_keeps_provider_for_event_model_names(temp_dir: Path) -> None:
+    agent = Codex(logs_dir=temp_dir, model_name="deepseek/deepseek-v4-flash")
+
+    cost = agent._compute_cost_from_pricing(
+        prompt_tokens=100,
+        completion_tokens=10,
+        cached_tokens=0,
+        cache_write_tokens=0,
+        model_name="deepseek-v4-flash",
+    )
+
+    assert cost is not None
+
+
 def test_effective_config_merges_harbor_overrides(
     tmp_path: Path, temp_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -153,6 +167,23 @@ def test_effective_config_merges_harbor_overrides(
     }
     assert "OPENAI_BASE_URL overrides" in caplog.text
     assert "Harbor MCP server 'shared' overrides" in caplog.text
+
+
+def test_deepseek_config_uses_responses_and_keeps_key_in_runtime_config(
+    temp_dir: Path,
+) -> None:
+    config = Codex(logs_dir=temp_dir)._build_effective_config(
+        "https://api.deepseek.com/", "deepseek", "runtime-key"
+    )
+
+    assert config["model_provider"] == "deepseek"
+    assert config["preferred_auth_method"] == "apikey"
+    assert config["model_providers"]["deepseek"] == {
+        "name": "deepseek",
+        "base_url": "https://api.deepseek.com/",
+        "wire_api": "responses",
+        "experimental_bearer_token": "runtime-key",
+    }
 
 
 @pytest.mark.asyncio

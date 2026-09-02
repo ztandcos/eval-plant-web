@@ -6,7 +6,14 @@ from unittest.mock import patch
 
 from evalplat.cli import main
 from evalplat.db import connect
-from evalplat.pipeline import EvalPipeline, format_suite_config, load_suite, resolve_suite_path
+from evalplat.pipeline import (
+    EvalPipeline,
+    ensure_bootstrap_image,
+    format_suite_config,
+    load_suite,
+    resolve_suite_path,
+)
+from evalplat.harbor_adapter import build_job_config
 from test_pipeline import harbor_trial
 
 
@@ -16,6 +23,12 @@ class FakeProcess:
 
     def wait(self):
         return 0
+
+
+class FakeBuildResult:
+    def __init__(self, returncode, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
 
 
 def _write_suite(root: Path, body: str) -> Path:
@@ -117,6 +130,22 @@ def _events(job: Path, rows) -> None:
 
 
 class SuitePipelineTest(unittest.TestCase):
+    def test_bootstrap_image_retries_once_then_succeeds(self):
+        config = {
+            "image": "evalplat-agent-base:local",
+            "dockerfile": "/tmp/Dockerfile",
+            "context": "/tmp",
+            "retries": 3,
+            "retry_delay_seconds": 0,
+            "timeout_seconds": 60,
+        }
+        with patch(
+            "evalplat.pipeline.subprocess.run",
+            side_effect=[FakeBuildResult(1, "temporary registry error"), FakeBuildResult(0)],
+        ) as build:
+            ensure_bootstrap_image(config)
+        self.assertEqual(build.call_count, 2)
+
     def _run(self, root: Path, suite: Path, launched, writer, resumes=None):
         if resumes is None:
             resumes = []
@@ -220,6 +249,37 @@ class SuitePipelineTest(unittest.TestCase):
             self.assertEqual(payload["agents"]["codex-mini"]["statistics"]["total_trials"], 6)
             self.assertEqual(payload["ship_gate"]["status"], "PASS")
             connection.close()
+
+    def test_agent_env_is_scoped_to_the_matching_agent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = load_suite(
+                _write_suite(
+                    root,
+                    """
+suite: scoped-env
+agents:
+  - name: codex
+    agent: codex
+    model: deepseek-v4-flash
+    agent_env:
+      OPENAI_API_KEY: ${DEEPSEEK_API_KEY}
+benchmarks:
+  - path: tasks
+trials: 1
+""",
+                )
+            )
+            job = build_job_config(
+                agents=config["agents"],
+                benches=[str(root / "tasks")],
+                job_name="scoped-env",
+                jobs_dir=root / "jobs",
+            )
+            self.assertEqual(
+                job["agents"][0]["env"], {"OPENAI_API_KEY": "${DEEPSEEK_API_KEY}"}
+            )
+            self.assertEqual(job["environment"]["env"], {})
 
     def test_pass_does_not_call_judge(self):
         with tempfile.TemporaryDirectory() as temp:

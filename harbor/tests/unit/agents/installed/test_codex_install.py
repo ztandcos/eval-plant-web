@@ -101,3 +101,22 @@ class TestCodexInstall:
         assert exec_as_agent.await_args.kwargs["env"] == {
             "NVM_NODEJS_ORG_MIRROR": "https://nodejs.org/dist"
         }
+
+    @pytest.mark.asyncio
+    async def test_apt_dependency_install_has_network_time_limits(self, temp_dir):
+        """A missing mirror must fail so the job retry can recover it."""
+        agent = Codex(logs_dir=temp_dir)
+        environment = AsyncMock()
+        environment.exec.return_value = AsyncMock(return_code=1, stdout="", stderr="")
+        agent._get_system_package_manager = cast(
+            Any, AsyncMock(return_value="apt-get")
+        )
+        exec_as_root = AsyncMock()
+        agent.exec_as_root = cast(Any, exec_as_root)
+
+        await agent.ensure_system_dependencies(environment, ("curl",))
+
+        command = exec_as_root.await_args.kwargs["command"]
+        assert "Acquire::Retries=2" in command
+        assert "Acquire::http::Timeout=30" in command
+        assert "Acquire::https::Timeout=30" in command

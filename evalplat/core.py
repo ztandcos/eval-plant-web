@@ -211,9 +211,10 @@ def _normalize_atif(data: Dict[str, Any]) -> List[Dict[str, Any]]:
         action = classify_step(role, text, command, tool_name)
         if has_error:
             action = "tool_error"
+        step_id = raw.get("step_id")
         normalized.append(
             {
-                "step_index": int(raw.get("step_id") or position),
+                "step_index": int(step_id) if step_id is not None else position,
                 "role": role,
                 "action_type": action,
                 "content": text,

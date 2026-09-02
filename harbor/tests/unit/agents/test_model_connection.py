@@ -8,6 +8,7 @@ from harbor.agents.model_connection import (
 )
 from harbor.agents.installed.aider import Aider
 from harbor.agents.installed.claude_code import ClaudeCode
+from harbor.agents.installed.codex import Codex
 from harbor.agents.installed.goose import Goose
 from harbor.agents.installed.mimo import MiMo
 from harbor.agents.installed.mini_swe_agent import MiniSweAgent
@@ -447,6 +448,33 @@ def test_agent_info_uses_runtime_provider_resolution(tmp_path) -> None:
     model_info = agent.to_agent_info().model_info
     assert model_info is not None
     assert model_info.provider == "anthropic"
+
+
+def test_deepseek_credentials_auto_configure_claude_code(tmp_path) -> None:
+    agent = ClaudeCode(
+        logs_dir=tmp_path,
+        model_name="deepseek/deepseek-v4-flash",
+        extra_env={"DEEPSEEK_API_KEY": "deepseek-key"},
+    )
+
+    assert agent.model_connection.provider == "deepseek"
+    assert agent.model_connection.api_key == "deepseek-key"
+    assert agent.model_connection.configured_base_url == (
+        "https://api.deepseek.com/anthropic"
+    )
+    assert agent._resolved_model_name() == "deepseek-v4-flash"
+
+
+def test_deepseek_credentials_auto_configure_codex(tmp_path) -> None:
+    agent = Codex(
+        logs_dir=tmp_path,
+        model_name="deepseek/deepseek-v4-flash",
+        extra_env={"DEEPSEEK_API_KEY": "deepseek-key"},
+    )
+
+    assert agent.model_connection.provider == "deepseek"
+    assert agent.model_connection.api_key == "deepseek-key"
+    assert agent.model_connection.base_url == "https://api.deepseek.com"
 
 
 def test_agent_info_preserves_unresolved_provider(tmp_path) -> None:

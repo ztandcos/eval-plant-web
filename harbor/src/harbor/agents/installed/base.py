@@ -665,7 +665,14 @@ class BaseInstalledAgent(BaseAgent, ABC):
         package_args = shlex.join(packages)
 
         if manager == "apt-get":
-            command = f"apt-get update && apt-get install -y {package_args}"
+            options = (
+                "-o Acquire::Retries=2 -o Acquire::http::Timeout=30 "
+                "-o Acquire::https::Timeout=30"
+            )
+            command = (
+                f"apt-get {options} update && "
+                f"apt-get {options} install -y {package_args}"
+            )
             env = {"DEBIAN_FRONTEND": "noninteractive"}
         elif manager == "dnf":
             command = f"dnf install -y {package_args}"

@@ -11,7 +11,12 @@ from rich.console import Console
 
 from evalplat import cli
 from evalplat.cli import command_inspect, command_report, main, parser, run_pipeline
-from evalplat.core import build_segment_index, build_structured_index, estimate_tokens
+from evalplat.core import (
+    build_segment_index,
+    build_structured_index,
+    estimate_tokens,
+    normalize_trajectory,
+)
 from evalplat.db import (
     connect,
     execution_status,
@@ -21,7 +26,7 @@ from evalplat.db import (
     sync_execution_events,
 )
 from evalplat.evaluation import evaluate, stability
-from evalplat.judge import analyze_trajectory
+from evalplat.judge import analyze_trajectory, parse_judge_json
 from evalplat.metrics import compare_experiments, report
 
 
@@ -373,6 +378,24 @@ class PipelineTest(unittest.TestCase):
                 1,
             )
             connection.close()
+
+    def test_atif_keeps_zero_based_step_ids(self):
+        steps = normalize_trajectory(
+            {
+                "schema_version": "ATIF-v1.7",
+                "steps": [
+                    {"step_id": 0, "source": "user", "message": "do the task"},
+                    {"step_id": 1, "source": "agent", "message": "plan"},
+                ],
+            }
+        )
+        self.assertEqual([item["step_index"] for item in steps], [0, 1])
+
+    def test_parse_judge_json_strips_think_and_fences(self):
+        payload = parse_judge_json(
+            '<think>scratch</think>\n```json\n{"status":"ATTRIBUTED"}\n```\n'
+        )
+        self.assertEqual(payload["status"], "ATTRIBUTED")
 
     def test_imports_exception_only_harbor_result_without_trajectory(self):
         with tempfile.TemporaryDirectory() as temp:

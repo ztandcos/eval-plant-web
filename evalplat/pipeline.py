@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -75,6 +76,62 @@ def _positive_int(value: Any, name: str) -> int:
     return value
 
 
+def _bootstrap_config(value: Any, suite_path: Path) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("bootstrap must be an object")
+    image = str(value.get("image") or "").strip()
+    dockerfile = str(value.get("dockerfile") or "").strip()
+    if not image or not dockerfile:
+        raise ValueError("bootstrap requires image and dockerfile")
+    context = str(value.get("context") or ".").strip()
+    retries = _positive_int(value.get("retries", 3), "bootstrap.retries")
+    retry_delay_seconds = float(value.get("retry_delay_seconds", 10))
+    timeout_seconds = _positive_int(value.get("timeout_seconds", 1800), "bootstrap.timeout_seconds")
+    if retry_delay_seconds < 0:
+        raise ValueError("bootstrap.retry_delay_seconds must be non-negative")
+    return {
+        "image": image,
+        "dockerfile": str((suite_path.parent / dockerfile).resolve()),
+        "context": str((suite_path.parent / context).resolve()),
+        "retries": retries,
+        "retry_delay_seconds": retry_delay_seconds,
+        "timeout_seconds": timeout_seconds,
+    }
+
+
+def ensure_bootstrap_image(config: Mapping[str, Any]) -> None:
+    """Build the shared agent image once, retrying transient Docker failures."""
+    command = [
+        "docker", "build", "--progress=plain", "--tag", str(config["image"]),
+        "--file", str(config["dockerfile"]), str(config["context"]),
+    ]
+    last_error = ""
+    for attempt in range(1, int(config["retries"]) + 1):
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=int(config["timeout_seconds"]),
+            )
+        except subprocess.TimeoutExpired:
+            last_error = "Docker agent image build timed out"
+        else:
+            if result.returncode == 0:
+                return
+            last_error = (result.stdout or "Docker agent image build failed").strip()[-2000:]
+        if attempt < int(config["retries"]):
+            time.sleep(float(config["retry_delay_seconds"]) * attempt)
+    raise RuntimeError(
+        "Could not prepare shared agent image %s after %s attempts: %s"
+        % (config["image"], config["retries"], last_error)
+    )
+
+
 def resolve_suite_path(spec: str, *, cwd: Optional[Path] = None) -> Path:
     raw = str(spec).strip()
     if not raw:
@@ -111,6 +168,7 @@ def _variant(value: Any, label: str) -> Dict[str, Any]:
             "model": None,
             "n_concurrent": None,
             "agent_kwargs": {},
+            "agent_env": {},
         }
     if not isinstance(value, dict):
         raise ValueError("%s must be a string or object" % label)
@@ -121,6 +179,12 @@ def _variant(value: Any, label: str) -> Dict[str, Any]:
     kwargs = value.get("agent_kwargs") or {}
     if not isinstance(kwargs, dict):
         raise ValueError("%s.agent_kwargs must be an object" % label)
+    agent_env = value.get("agent_env") or {}
+    if not isinstance(agent_env, dict) or not all(
+        isinstance(key, str) and isinstance(item, str)
+        for key, item in agent_env.items()
+    ):
+        raise ValueError("%s.agent_env must be an object of strings" % label)
     n_concurrent = value.get("n_concurrent")
     if n_concurrent is not None:
         n_concurrent = _positive_int(n_concurrent, "%s.n_concurrent" % label)
@@ -130,6 +194,7 @@ def _variant(value: Any, label: str) -> Dict[str, Any]:
         "model": value.get("model"),
         "n_concurrent": n_concurrent,
         "agent_kwargs": {str(key): value for key, value in kwargs.items()},
+        "agent_env": agent_env,
     }
 
 
@@ -336,9 +401,15 @@ def load_suite(path: Path) -> Dict[str, Any]:
     recovery = {
         "max_infra_retries": int(raw_recovery.get("max_infra_retries", 1)),
         "max_job_resumes": int(raw_recovery.get("max_job_resumes", 1)),
+        "agent_setup_timeout_multiplier": float(
+            raw_recovery.get("agent_setup_timeout_multiplier", 1.0)
+        ),
     }
-    if any(value < 0 for value in recovery.values()):
+    if recovery["max_infra_retries"] < 0 or recovery["max_job_resumes"] < 0:
         raise ValueError("Recovery limits must be non-negative")
+    if recovery["agent_setup_timeout_multiplier"] <= 0:
+        raise ValueError("recovery.agent_setup_timeout_multiplier must be > 0")
+    bootstrap = _bootstrap_config(data.get("bootstrap"), path)
     raw_comparison = data.get("comparison")
     comparison = None
     if raw_comparison is not None:
@@ -383,6 +454,7 @@ def load_suite(path: Path) -> Dict[str, Any]:
             ),
         },
         "recovery": recovery,
+        "bootstrap": bootstrap,
     }
 
 
@@ -678,6 +750,8 @@ class EvalPipeline:
 
     def _run_job(self) -> Dict[str, str]:
         experiments = self._experiments()
+        if self.config["bootstrap"] is not None:
+            ensure_bootstrap_image(self.config["bootstrap"])
         jobs_dir = self.db_path.parent / "jobs"
         benches = [
             str(item.get("path") or item["name"]) for item in self.config["benchmarks"]
@@ -692,6 +766,9 @@ class EvalPipeline:
             jobs_dir=jobs_dir,
             env_names=self.config["env"],
             max_infra_retries=self.config["recovery"]["max_infra_retries"],
+            agent_setup_timeout_multiplier=self.config["recovery"][
+                "agent_setup_timeout_multiplier"
+            ],
         )
         config["datasets"] = self._datasets()
         job_dir = job_dir_from_config(config)

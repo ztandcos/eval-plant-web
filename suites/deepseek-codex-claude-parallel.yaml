@@ -1,0 +1,48 @@
+suite: deepseek-codex-claude-parallel
+
+agents:
+  - name: codex-flash
+    agent: codex
+    model: deepseek/deepseek-v4-flash
+    n_concurrent: 1
+    agent_kwargs:
+      reasoning_effort: high
+  - name: claude-code-flash
+    agent: claude-code
+    model: deepseek/deepseek-v4-flash
+    n_concurrent: 1
+    agent_kwargs:
+      reasoning_effort: high
+      max_turns: 30
+
+benchmarks:
+  - path: ../evals
+    tasks: [fix-off-by-one]
+
+trials: 1
+concurrency: 2
+sandbox: docker
+env: [DEEPSEEK_API_KEY]
+bootstrap:
+  image: evalplat-agent-base:local
+  dockerfile: ../docker/agent-base.Dockerfile
+  context: ..
+  retries: 3
+  retry_delay_seconds: 10
+  timeout_seconds: 1800
+diagnosis:
+  policy: all_final_non_pass
+  judge_model: deepseek/deepseek-v4-flash
+recovery:
+  max_infra_retries: 2
+  max_job_resumes: 1
+  agent_setup_timeout_multiplier: 3
+comparison:
+  baseline: codex-flash
+  candidates: [claude-code-flash]
+metrics: [pass@1, latency]
+gate:
+  k: 1
+  max_regressions: 1
+  pass_at_1_drop: 1.0
+  cost_increase: 10.0

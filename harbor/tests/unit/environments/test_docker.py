@@ -209,6 +209,33 @@ class TestMergeEnv:
         )
         assert result == {"FOO": "override", "BAZ": "qux", "NEW": "var"}
 
+    def test_persistent_templates_resolve_from_host(self, docker_env, monkeypatch):
+        monkeypatch.setenv("HARBOR_TEST_TOKEN", "secret-from-host")
+        docker_env._persistent_env = {"TOKEN": "${HARBOR_TEST_TOKEN}"}
+        assert docker_env._merge_env(None) == {"TOKEN": "secret-from-host"}
+
+    def test_construct_resolves_persistent_templates(self, temp_dir, monkeypatch):
+        monkeypatch.setenv("HARBOR_TEST_TOKEN", "secret-from-host")
+        env_dir = temp_dir / "environment"
+        env_dir.mkdir()
+        (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+        trial_dir = temp_dir / "trial"
+        trial_dir.mkdir()
+        trial_paths = TrialPaths(trial_dir=trial_dir)
+        trial_paths.mkdir()
+        with patch.object(
+            DockerEnvironment, "_detect_windows_containers", return_value=False
+        ):
+            env = DockerEnvironment(
+                environment_dir=env_dir,
+                environment_name="test-task",
+                session_id="test-task__abc123",
+                trial_paths=trial_paths,
+                task_env_config=EnvironmentConfig(docker_image="ubuntu:22.04"),
+                persistent_env={"TOKEN": "${HARBOR_TEST_TOKEN}"},
+            )
+        assert env._persistent_env == {"TOKEN": "secret-from-host"}
+
 
 class TestExecPersistentEnv:
     """Tests that exec() includes persistent env vars."""
